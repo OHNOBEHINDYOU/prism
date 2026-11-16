@@ -94,7 +94,7 @@ button:focus-visible,.knob:focus-within{outline:2px solid #d9522b;outline-offset
 .fad .lbl::after{display:none}
 #msg{margin:0;padding:8px 10px;font:400 13px/1.45 var(--read);color:var(--amber);background:#100c06;border-radius:3px;box-shadow:inset 0 2px 6px #000;-webkit-user-select:text;user-select:text}
 #msg:empty{display:none}
-#pip{position:fixed;left:0;top:0;width:2px;height:2px;opacity:.01;pointer-events:none}
+#pip{position:absolute;inset:0;width:100%;height:100%;object-fit:cover;pointer-events:none}
 body:not([data-style="retro"]) #grat{background:none}
 body[data-style="modern"] #screen{margin:0;border-radius:0;box-shadow:none;background:#05050b}
 body[data-style="modern"] #grat::after,body[data-style="led"] #grat::after,body[data-style="vinyl"] #grat::after,body[data-style="print"] #grat::after{display:none}
@@ -134,11 +134,11 @@ body.quiet #screen{margin:0!important;border-radius:0!important;box-shadow:none!
   <p id="now" class="readout">Pick a sound source below to begin</p>
 </header>
 <div id="screen">
+  <video id="pip" muted playsinline webkit-playsinline autoplay aria-hidden="true"></video>
   <canvas id="c" aria-label="Audio visualisation"></canvas>
   <div id="grat" aria-hidden="true"></div>
   <p id="hint" role="status"></p>
 </div>
-<video id="pip" muted playsinline autoplay autopictureinpicture aria-hidden="true"></video>
 <section class="panel" aria-label="Controls">
   <div class="grp">
     <span class="lbl">Input</span>
@@ -281,19 +281,27 @@ function primePip(){
 }
 function wkPip(){ try{ return !!(pv.webkitSupportsPresentationMode&&pv.webkitSupportsPresentationMode('picture-in-picture')); }catch(e){ return false; } }
 function pipState(on){ pipOn=on; $('bPip').setAttribute('aria-pressed',String(on)); }
+function pipInfo(extra){
+  let wk='none';
+  try{ if(pv.webkitSupportsPresentationMode) wk=String(pv.webkitSupportsPresentationMode('picture-in-picture')); }catch(e){ wk='error'; }
+  return 'capture='+(cv.captureStream?'yes':'no')+', webkit='+wk+', standard='+(pv.requestPictureInPicture?(document.pictureInPictureEnabled?'yes':'disabled'):'no')
+    +', ready='+pv.readyState+', size='+pv.videoWidth+'x'+pv.videoHeight+', paused='+pv.paused+(extra?', error='+extra:'');
+}
 function togglePip(){
-  const NOPE='The mini player is not available in this view. Open the page directly in Safari and try again.';
   if(pipOn){
-    try{ if(wkPip()) pv.webkitSetPresentationMode('inline'); else if(document.pictureInPictureElement) document.exitPictureInPicture(); }catch(e){}
+    try{ if(document.pictureInPictureElement) document.exitPictureInPicture(); else if(pv.webkitSetPresentationMode) pv.webkitSetPresentationMode('inline'); }catch(e){}
     pipState(false); return;
   }
-  if(!cv.captureStream||!(wkPip()||document.pictureInPictureEnabled)) return say(NOPE);
-  const fresh=!pipPrimed||pv.paused;
+  if(!cv.captureStream) return say('Mini player is not available here. Details: '+pipInfo());
   primePip();
-  try{
-    if(wkPip()){ pv.webkitSetPresentationMode('picture-in-picture'); pipState(true); say(''); }
-    else pv.requestPictureInPicture().then(()=>{ pipState(true); say(''); }).catch(()=>say(fresh?'Press Mini player once more to open it.':NOPE));
-  }catch(e){ say(fresh?'Press Mini player once more to open it.':NOPE); }
+  let errTxt='';
+  /* ask both ways inside the tap: whichever the browser supports will open the window */
+  if(pv.requestPictureInPicture){
+    try{ const pr=pv.requestPictureInPicture(); if(pr&&pr.catch) pr.catch(e=>{ errTxt=String(e&&e.name||e); }); }catch(e){ errTxt=String(e&&e.name||e); }
+  }
+  try{ if(wkPip()) pv.webkitSetPresentationMode('picture-in-picture'); }catch(e){ if(!errTxt) errTxt=String(e&&e.name||e); }
+  say('');
+  setTimeout(()=>{ if(!pipOn) say('Mini player could not open. Details: '+pipInfo(errTxt)); },1500);
 }
 pv.addEventListener('webkitpresentationmodechanged',()=>pipState(pv.webkitPresentationMode==='picture-in-picture'));
 pv.addEventListener('enterpictureinpicture',()=>pipState(true));
