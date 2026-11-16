@@ -307,6 +307,14 @@ pv.addEventListener('webkitpresentationmodechanged',()=>pipState(pv.webkitPresen
 pv.addEventListener('enterpictureinpicture',()=>pipState(true));
 pv.addEventListener('leavepictureinpicture',()=>pipState(false));
 pv.addEventListener('pause',()=>{ if(pipOn) primePip(); });
+/* another app taking over the audio can suspend the context and pause the mini player: keep trying to bring both back */
+function recover(){
+  if(!live) return;
+  try{ if(ac&&ac.state!=='running') ac.resume().catch(()=>{}); }catch(e){}
+  if(pipOn&&pv.paused) primePip();
+}
+setInterval(recover,1500);
+try{ if(navigator.audioSession) navigator.audioSession.addEventListener('statechange',()=>{ if(navigator.audioSession.state==='active') recover(); }); }catch(e){}
 function disconnect(){
   stopDemo();
   if(stream){ stream.getTracks().forEach(t=>t.stop()); stream=null; }
@@ -351,7 +359,14 @@ async function useMic(){
     micGain=ac.createGain(); micGain.gain.value=micSens; srcNode.connect(micGain); micGain.connect(inp);
     outGain.gain.value=0; kind='mic'; live=true; mark(); say('');
     pk=0.3; silentSince=0;
-    setNow('Listening through the microphone - play music out loud');
+    const LISTEN='Listening through the microphone - play music out loud';
+    setNow(LISTEN);
+    const mt=s.getAudioTracks()[0];
+    if(mt){
+      mt.addEventListener('mute',()=>{ if(stream===s) setNow('Microphone paused by another app - it resumes when that app stops playing'); });
+      mt.addEventListener('unmute',()=>{ if(stream===s){ setNow(LISTEN); recover(); } });
+      mt.addEventListener('ended',()=>{ if(stream===s) goIdle('Microphone was stopped by the phone - tap Mic to start again'); });
+    }
   }catch(e){ say('The microphone'+BLOCKED); }
 }
 async function useTab(){
