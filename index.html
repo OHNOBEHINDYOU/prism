@@ -99,7 +99,7 @@ button:focus-visible{outline:2px solid #d9522b;outline-offset:2px}
 .fader:focus-visible{outline:2px solid #d9522b;outline-offset:2px}
 .fad .lbl{flex:none}
 .fad .lbl::after{display:none}
-#file,#picFile{position:absolute;width:1px;height:1px;opacity:0;pointer-events:none}
+#file,#picFile,#mdlFile{position:absolute;width:1px;height:1px;opacity:0;pointer-events:none}
 #now{flex:1;min-width:0}
 #bpm{flex:none;white-space:nowrap}
 .sel{flex:1;min-width:0;height:34px;padding:0 10px;font:400 13px/1 var(--read);text-transform:uppercase;letter-spacing:.04em;color:var(--phos);background:#060d09;border:1px solid #6d7174;border-radius:3px;box-shadow:inset 0 2px 6px #000;-webkit-appearance:none;appearance:none}
@@ -112,6 +112,9 @@ button:focus-visible{outline:2px solid #d9522b;outline-offset:2px}
 .fold::after{content:"";flex:1;height:1px;background:rgba(0,0,0,.28);box-shadow:0 1px 0 rgba(255,255,255,.6)}
 .foldbody{display:flex;flex-direction:column;gap:8px}
 #tip{position:fixed;z-index:60;left:8px;top:8px;max-width:min(290px,86vw);padding:11px 13px;font:400 14px/1.45 system-ui,-apple-system,"Segoe UI",sans-serif;letter-spacing:0;text-transform:none;color:#f4f4f6;background:#0f1012;border:1px solid #7a7e81;border-radius:8px;box-shadow:0 8px 22px rgba(0,0,0,.65);pointer-events:none}
+#spId{text-transform:none;letter-spacing:0;font-size:16px}
+#spMsg{margin:6px 0 0;font:400 12px/1.45 var(--read);color:#3d4144;-webkit-user-select:text;user-select:text;overflow-wrap:anywhere}
+#spMsg:empty{display:none}
 #msg{margin:0;padding:8px 10px;font:400 13px/1.45 var(--read);color:var(--amber);background:#100c06;border-radius:3px;box-shadow:inset 0 2px 6px #000;-webkit-user-select:text;user-select:text}
 #msg:empty{display:none}
 #pip{position:absolute;inset:0;width:100%;height:100%;object-fit:cover;pointer-events:none}
@@ -214,8 +217,11 @@ body.quiet #screen{margin:0!important;border-radius:0!important;box-shadow:none!
       <button id="bSmooth" type="button" aria-pressed="false" hidden>Smooth lines</button>
       <button id="bPic" type="button" hidden>Choose picture</button>
       <button id="bPicReset" type="button" hidden>Reset picture</button>
+      <button id="bMdl" type="button" hidden>Choose model</button>
+      <button id="bMdlReset" type="button" hidden>Reset model</button>
     </div>
     <input type="file" id="picFile" accept="image/*" tabindex="-1" aria-hidden="true">
+    <input type="file" id="mdlFile" accept=".glb,model/gltf-binary,application/octet-stream" tabindex="-1" aria-hidden="true">
   </div>
   <div class="grp" id="palGrp">
     <span class="lbl">Trace colour</span>
@@ -259,6 +265,18 @@ body.quiet #screen{margin:0!important;border-radius:0!important;box-shadow:none!
         <button id="bFavAdd" type="button">Save look</button>
         <button id="bFavDel" type="button" hidden>Remove</button>
       </div>
+    </div>
+  </div>
+  <div class="grp" id="spGrp">
+    <button type="button" class="fold" id="bFoldSp" data-fold="sp" aria-expanded="false" aria-controls="spBody">Spotify</button>
+    <div class="foldbody" id="spBody" hidden>
+      <div class="keys fad">
+        <input type="text" id="spId" class="sel" autocomplete="off" autocapitalize="off" autocorrect="off" spellcheck="false" maxlength="64" placeholder="Paste your Client ID here" aria-label="Spotify Client ID">
+      </div>
+      <div class="keys">
+        <button id="bSp" type="button" aria-pressed="false">Connect</button>
+      </div>
+      <p id="spMsg"></p>
     </div>
   </div>
   <div class="grp">
@@ -919,6 +937,13 @@ function col(t,a){
   const x=t*stops.length, i=Math.floor(x), f=x-i, A=stops[i%stops.length], B=stops[(i+1)%stops.length];
   return 'rgba('+(A[0]+(B[0]-A[0])*f|0)+','+(A[1]+(B[1]-A[1])*f|0)+','+(A[2]+(B[2]-A[2])*f|0)+','+a+')';
 }
+function colRGB(t){
+  if(MONO) return [1,1,1];
+  t=((t+drift)%1+1)%1;
+  if(!stops){ const f=n=>{ const k=(n+t*12)%12; return 0.6-0.38*Math.max(-1,Math.min(k-3,9-k,1)); }; return [f(0),f(8),f(4)]; }
+  const x=t*stops.length, i=Math.floor(x), fr=x-i, A=stops[i%stops.length], B=stops[(i+1)%stops.length];
+  return [(A[0]+(B[0]-A[0])*fr)/255,(A[1]+(B[1]-A[1])*fr)/255,(A[2]+(B[2]-A[2])*fr)/255];
+}
 const FR=CanvasRenderingContext2D.prototype.fillRect, FILL=CanvasRenderingContext2D.prototype.fill;
 let BGC='3,10,6', BGH='rgb(3,10,6)', MONO=false, WIRE=false, barsN=0;
 function fade(a){ g.globalCompositeOperation='source-over'; g.fillStyle='rgba('+BGC+','+a+')'; FR.call(g,0,0,W,H); }
@@ -1424,39 +1449,244 @@ function mPic2D(t){
     g.globalCompositeOperation='lighter'; pass(pic.tint[0],-sp); pass(pic.tint[1],0); pass(pic.tint[2],sp); g.globalCompositeOperation='source-over';
   }else pass(pic.c,0);
 }
-const PZ=new Float32Array(PG*PG), PXs=new Float32Array(PG*PG), PYs=new Float32Array(PG*PG), PF=new Float32Array(PG*PG), PORD=new Uint16Array(PG*PG);
-for(let i=0;i<PG*PG;i++) PORD[i]=i;
-function mPic3D(t){
-  if(!pic) defaultPicture();
-  fade(0.55);
-  const b=bands(16), m=Math.min(W,H), cx=W/2, cy=H/2, n=PG, target=(pbeat(t)>>3)%3;
-  /* glide between a relief, a globe and a drum; the lightest parts of the picture stand proud */
-  let dm=target-picMorph; if(dm>1.5) dm-=3; if(dm<-1.5) dm+=3; picMorph=((picMorph+dm*0.05)%3+3)%3;
-  const s0=Math.floor(picMorph)%3, s1=(s0+1)%3, mix=picMorph-Math.floor(picMorph);
-  picSpin+=0.006+level*0.02+beat*0.03;
-  const ry=picSpin, rx=0.45+0.2*Math.sin(t*0.0003), cr=Math.cos(ry), sr2=Math.sin(ry), cxr=Math.cos(rx), sxr=Math.sin(rx), lift=0.25+bass*1.5+beat*0.4;
-  const pos=(sh,u,v,l,out)=>{
-    if(sh===0){ out[0]=u*0.95; out[1]=v*0.95; out[2]=-(l-0.5)*0.34*lift+0.05*b[((u+0.5)*15)|0]*Math.sin(Math.hypot(u,v)*14-t*0.006); }
-    else if(sh===1){ const lon=u*TAU, lat=v*Math.PI, r=0.42*(1+l*0.22*lift); out[0]=r*Math.cos(lat)*Math.sin(lon); out[1]=r*Math.sin(lat); out[2]=r*Math.cos(lat)*Math.cos(lon); }
-    else{ const an=u*TAU, r=0.36*(1+l*0.28*lift); out[0]=r*Math.sin(an); out[1]=v*0.92; out[2]=r*Math.cos(an); }
-  };
-  const A=[0,0,0], B=[0,0,0];
-  for(let j=0;j<n;j++) for(let i=0;i<n;i++){
-    const k=j*n+i, u=i/(n-1)-0.5, v=j/(n-1)-0.5, l=pic.lum[k];
-    pos(s0,u,v,l,A); pos(s1,u,v,l,B);
-    const x=A[0]+(B[0]-A[0])*mix, y=A[1]+(B[1]-A[1])*mix, z=A[2]+(B[2]-A[2])*mix;
-    const x2=x*cr+z*sr2, z2=-x*sr2+z*cr, y2=y*cxr-z2*sxr, z3=y*sxr+z2*cxr, f=2.2/(2.2+z3);
-    PXs[k]=cx+x2*m*0.95*f; PYs[k]=cy+y2*m*0.95*f; PZ[k]=z3; PF[k]=f;
+/* ---------- model 3D: a real 3D model (.glb), drawn with WebGL and bent by the music ---------- */
+const M4={
+  mul(a,b){ const o=new Float32Array(16); for(let c=0;c<4;c++) for(let r=0;r<4;r++) o[c*4+r]=a[r]*b[c*4]+a[4+r]*b[c*4+1]+a[8+r]*b[c*4+2]+a[12+r]*b[c*4+3]; return o; },
+  id(){ return new Float32Array([1,0,0,0,0,1,0,0,0,0,1,0,0,0,0,1]); },
+  trs(t,q,s){
+    const x=q[0],y=q[1],z=q[2],w=q[3];
+    return new Float32Array([(1-2*(y*y+z*z))*s[0],2*(x*y+z*w)*s[0],2*(x*z-y*w)*s[0],0, 2*(x*y-z*w)*s[1],(1-2*(x*x+z*z))*s[1],2*(y*z+x*w)*s[1],0, 2*(x*z+y*w)*s[2],2*(y*z-x*w)*s[2],(1-2*(x*x+y*y))*s[2],0, t[0],t[1],t[2],1]);
+  },
+  persp(fov,near,far){ const f=1/Math.tan(fov/2); return new Float32Array([f,0,0,0,0,f,0,0,0,0,(far+near)/(near-far),-1,0,0,2*far*near/(near-far),0]); },
+  view(ry,rx,dist){
+    const cy=Math.cos(ry), sy=Math.sin(ry), cx=Math.cos(rx), sx=Math.sin(rx);
+    return new Float32Array([cy,sx*sy,-cx*sy,0, 0,cx,sx,0, sy,-sx*cy,cx*cy,0, 0,0,-dist,1]);
   }
-  PORD.sort((p,q)=>PZ[q]-PZ[p]);
-  const tile=m/n*1.08*(1+beat*0.25);
-  for(let o=0;o<PORD.length;o++){
-    const k=PORD[o], sz=tile*PF[k];
-    g.fillStyle=MONO?'rgba(255,255,255,'+pic.lum[k].toFixed(2)+')':pic.cols[k];
-    g.fillRect(PXs[k]-sz/2,PYs[k]-sz/2,sz,sz);
+};
+/* reads a .glb file into plain arrays grouped by material, baked into one pose and scaled to fit the screen */
+async function readGLB(buf){
+  const dv=new DataView(buf);
+  if(buf.byteLength<20||dv.getUint32(0,true)!==0x46546C67) throw new Error('notglb');
+  let off=12, json=null, binOff=-1;
+  while(off+8<=buf.byteLength){
+    const len=dv.getUint32(off,true), type=dv.getUint32(off+4,true);
+    if(type===0x4E4F534A) json=JSON.parse(new TextDecoder().decode(new Uint8Array(buf,off+8,len)));
+    else if(type===0x004E4942&&binOff<0) binOff=off+8;
+    off+=8+len+((4-len%4)%4);
+  }
+  if(!json||!json.meshes) throw new Error('empty');
+  const need=(json.extensionsRequired||[]).join(' ');
+  if(/draco|meshopt/i.test(need)) throw new Error('packed');
+  const CT={5120:[Int8Array,1,127],5121:[Uint8Array,1,255],5122:[Int16Array,2,32767],5123:[Uint16Array,2,65535],5125:[Uint32Array,4,1],5126:[Float32Array,4,1]};
+  const NC={SCALAR:1,VEC2:2,VEC3:3,VEC4:4,MAT4:16};
+  const acc=(i,keepInt)=>{
+    const a=json.accessors[i], ct=CT[a.componentType], nc=NC[a.type]||1, out=keepInt?new Uint32Array(a.count*nc):new Float32Array(a.count*nc);
+    if(a.bufferView===undefined||!ct) return out;
+    const bv=json.bufferViews[a.bufferView]; if((bv.buffer||0)!==0||binOff<0) throw new Error('split');
+    const base=binOff+(bv.byteOffset||0)+(a.byteOffset||0), stride=bv.byteStride||ct[1]*nc, norm=a.normalized&&!keepInt?1/ct[2]:0;
+    const get=ct[0]===Float32Array?'getFloat32':ct[0]===Uint32Array?'getUint32':ct[0]===Uint16Array?'getUint16':ct[0]===Int16Array?'getInt16':ct[0]===Uint8Array?'getUint8':'getInt8';
+    for(let k=0;k<a.count;k++) for(let c=0;c<nc;c++){ const v=dv[get](base+k*stride+c*ct[1],true); out[k*nc+c]=norm?Math.max(-1,v*norm):v; }
+    return out;
+  };
+  const groups=new Map(); let tris=0;
+  const grp=m=>{ if(!groups.has(m)) groups.set(m,{P:[],N:[],U:[],I:[],n:0}); return groups.get(m); };
+  const walk=(ni,parent,depth)=>{
+    const nd=json.nodes[ni]; if(!nd||depth>64) return;
+    const local=nd.matrix?new Float32Array(nd.matrix):M4.trs(nd.translation||[0,0,0],nd.rotation||[0,0,0,1],nd.scale||[1,1,1]), w=M4.mul(parent,local);
+    if(nd.mesh!==undefined&&json.meshes[nd.mesh]) for(const pr of json.meshes[nd.mesh].primitives||[]){
+      if((pr.mode!==undefined&&pr.mode!==4)||!pr.attributes||pr.attributes.POSITION===undefined) continue;
+      if(pr.extensions&&pr.extensions.KHR_draco_mesh_compression) throw new Error('packed');
+      const p=acc(pr.attributes.POSITION), n=p.length/3, nr=pr.attributes.NORMAL!==undefined?acc(pr.attributes.NORMAL):null, uv=pr.attributes.TEXCOORD_0!==undefined?acc(pr.attributes.TEXCOORD_0):null;
+      let ix=pr.indices!==undefined?acc(pr.indices,true):null; if(!ix){ ix=new Uint32Array(n); for(let k=0;k<n;k++) ix[k]=k; }
+      const P=new Float32Array(n*3), N=new Float32Array(n*3), U=new Float32Array(n*2);
+      for(let k=0;k<n;k++){
+        const x=p[k*3], y=p[k*3+1], z=p[k*3+2];
+        P[k*3]=w[0]*x+w[4]*y+w[8]*z+w[12]; P[k*3+1]=w[1]*x+w[5]*y+w[9]*z+w[13]; P[k*3+2]=w[2]*x+w[6]*y+w[10]*z+w[14];
+        if(nr){ const a=nr[k*3], b=nr[k*3+1], c=nr[k*3+2]; N[k*3]=w[0]*a+w[4]*b+w[8]*c; N[k*3+1]=w[1]*a+w[5]*b+w[9]*c; N[k*3+2]=w[2]*a+w[6]*b+w[10]*c; }
+        if(uv){ U[k*2]=uv[k*2]; U[k*2+1]=uv[k*2+1]; }
+      }
+      if(!nr) for(let k=0;k+2<ix.length;k+=3){      /* no normals in the file: work them out from the faces */
+        const a=ix[k]*3, b=ix[k+1]*3, c=ix[k+2]*3, ux=P[b]-P[a], uy=P[b+1]-P[a+1], uz=P[b+2]-P[a+2], vx=P[c]-P[a], vy=P[c+1]-P[a+1], vz=P[c+2]-P[a+2];
+        const nx=uy*vz-uz*vy, ny=uz*vx-ux*vz, nz=ux*vy-uy*vx;
+        for(const q of [a,b,c]){ N[q]+=nx; N[q+1]+=ny; N[q+2]+=nz; }
+      }
+      const G=grp(pr.material===undefined?-1:pr.material), base=G.n;
+      if(base){ for(let k=0;k<ix.length;k++) ix[k]+=base; }
+      G.P.push(P); G.N.push(N); G.U.push(U); G.I.push(ix); G.n+=n; tris+=ix.length/3;
+      if(tris>3000000) throw new Error('big');
+    }
+    for(const c of nd.children||[]) walk(c,w,depth+1);
+  };
+  const sc=json.scenes&&json.scenes[json.scene||0], roots=sc&&sc.nodes?sc.nodes:(json.nodes||[]).map((_,i)=>i).filter(i=>!(json.nodes||[]).some(n=>(n.children||[]).indexOf(i)>=0));
+  for(const r of roots) walk(r,M4.id(),0);
+  if(!tris) throw new Error('empty');
+  const join=(parts,T)=>{ let len=0; for(const q of parts) len+=q.length; const o=new T(len); let at=0; for(const q of parts){ o.set(q,at); at+=q.length; } return o; };
+  let lo=[1e30,1e30,1e30], hi=[-1e30,-1e30,-1e30];
+  const out=[];
+  for(const [mi,G] of groups){
+    const P=join(G.P,Float32Array), N=join(G.N,Float32Array);
+    for(let k=0;k<P.length;k+=3) for(let c=0;c<3;c++){ const v=P[k+c]; if(v<lo[c]) lo[c]=v; if(v>hi[c]) hi[c]=v; }
+    for(let k=0;k<N.length;k+=3){ const l=Math.hypot(N[k],N[k+1],N[k+2])||1; N[k]/=l; N[k+1]/=l; N[k+2]/=l; }
+    const mt=(json.materials||[])[mi]||{}, pbr=mt.pbrMetallicRoughness||{}, sg=(mt.extensions||{}).KHR_materials_pbrSpecularGlossiness||{};
+    const ti=pbr.baseColorTexture||sg.diffuseTexture, tx=ti&&(json.textures||[])[ti.index], im=tx&&tx.source!==undefined?(json.images||[])[tx.source]:null;
+    let blob=null;
+    if(im&&im.bufferView!==undefined&&binOff>=0){ const bv=json.bufferViews[im.bufferView]; blob=new Blob([new Uint8Array(buf,binOff+(bv.byteOffset||0),bv.byteLength)],{type:im.mimeType||'image/png'}); }
+    else if(im&&im.uri&&im.uri.indexOf('data:')===0){ try{ blob=await (await fetch(im.uri)).blob(); }catch(e){} }
+    let img=null;
+    if(blob){ try{ img=await new Promise((ok,no)=>{ const u=URL.createObjectURL(blob), el=new Image(); el.onload=()=>{ URL.revokeObjectURL(u); ok(el); }; el.onerror=()=>{ URL.revokeObjectURL(u); no(); }; el.src=u; }); }catch(e){ img=null; } }
+    out.push({P:P,N:N,U:join(G.U,Float32Array),I:join(G.I,Uint32Array),n:G.n,col:pbr.baseColorFactor||sg.diffuseFactor||[1,1,1,1],img:img,cut:mt.alphaMode==='MASK'||mt.alphaMode==='BLEND'});
+  }
+  const ctr=[(lo[0]+hi[0])/2,(lo[1]+hi[1])/2,(lo[2]+hi[2])/2], k=1.7/(Math.max(hi[0]-lo[0],hi[1]-lo[1],hi[2]-lo[2])||1);
+  for(const G of out) for(let q=0;q<G.P.length;q+=3){ G.P[q]=(G.P[q]-ctr[0])*k; G.P[q+1]=(G.P[q+1]-ctr[1])*k; G.P[q+2]=(G.P[q+2]-ctr[2])*k; }
+  return {groups:out,tris:tris};
+}
+/* the stand-in until you choose your own: a knotted tube with a band of colour running along it */
+function builtInModel(){
+  const SU=220, SV=20, n=(SU+1)*(SV+1), P=new Float32Array(n*3), N=new Float32Array(n*3), U=new Float32Array(n*2), I=new Uint32Array(SU*SV*6);
+  const curve=u=>{ const a=u*TAU, r=0.52+0.2*Math.cos(3*a); return [r*Math.cos(2*a),0.26*Math.sin(3*a),r*Math.sin(2*a)]; };
+  let q=0;
+  for(let i=0;i<=SU;i++){
+    const u=i/SU, c=curve(u), d=curve(u+0.001), T=[d[0]-c[0],d[1]-c[1],d[2]-c[2]], tl=Math.hypot(T[0],T[1],T[2]); T[0]/=tl; T[1]/=tl; T[2]/=tl;
+    let B=[T[1]*c[2]-T[2]*c[1],T[2]*c[0]-T[0]*c[2],T[0]*c[1]-T[1]*c[0]]; const bl=Math.hypot(B[0],B[1],B[2])||1; B=[B[0]/bl,B[1]/bl,B[2]/bl];
+    const Nn=[B[1]*T[2]-B[2]*T[1],B[2]*T[0]-B[0]*T[2],B[0]*T[1]-B[1]*T[0]];
+    for(let j=0;j<=SV;j++,q++){
+      const a=j/SV*TAU, ca=Math.cos(a), sa=Math.sin(a), nx=Nn[0]*ca+B[0]*sa, ny=Nn[1]*ca+B[1]*sa, nz=Nn[2]*ca+B[2]*sa;
+      P[q*3]=c[0]+nx*0.13; P[q*3+1]=c[1]+ny*0.13; P[q*3+2]=c[2]+nz*0.13; N[q*3]=nx; N[q*3+1]=ny; N[q*3+2]=nz; U[q*2]=u; U[q*2+1]=j/SV;
+    }
+  }
+  q=0;
+  for(let i=0;i<SU;i++) for(let j=0;j<SV;j++){ const a=i*(SV+1)+j, b=a+SV+1; I[q++]=a; I[q++]=b; I[q++]=a+1; I[q++]=a+1; I[q++]=b; I[q++]=b+1; }
+  const c=document.createElement('canvas'); c.width=256; c.height=4; const x=c.getContext('2d'), gr=x.createLinearGradient(0,0,256,0);
+  ['#ff2bd6','#ffb000','#39ff88','#00f5ff','#7b2ff7','#ff2bd6'].forEach((h,k)=>gr.addColorStop(k/5,h)); x.fillStyle=gr; x.fillRect(0,0,256,4);
+  return {groups:[{P:P,N:N,U:U,I:I,n:n,col:[1,1,1,1],img:c,cut:false}],tris:I.length/3};
+}
+const MDL={data:null,own:false,gl:null,cv:null,prog:null,loc:null,gpu:null,dead:false,tried:false,spin:0,fx:[1,0,0,0],pts:null,err:''};
+function mdlGL(){
+  if(MDL.gl||MDL.dead) return MDL.gl;
+  try{
+    const c=document.createElement('canvas'); c.width=c.height=1024;
+    const o={alpha:true,antialias:true,premultipliedAlpha:true,depth:true}, gl=c.getContext('webgl2',o)||c.getContext('webgl',o);
+    if(!gl) throw new Error('nogl');
+    const two=typeof WebGL2RenderingContext!=='undefined'&&gl instanceof WebGL2RenderingContext;
+    if(!two&&!gl.getExtension('OES_element_index_uint')) throw new Error('nogl');
+    const sh=(type,src)=>{ const s=gl.createShader(type); gl.shaderSource(s,src); gl.compileShader(s); if(!gl.getShaderParameter(s,gl.COMPILE_STATUS)) throw new Error(gl.getShaderInfoLog(s)||'shader'); return s; };
+    const vs=`attribute vec3 aP; attribute vec3 aN; attribute vec2 aU;
+uniform mat4 uMV; uniform mat4 uPr; uniform float uT; uniform float uBass; uniform float uBeat; uniform float uMid; uniform float uTreb; uniform vec4 uFx;
+varying vec3 vN; varying vec3 vP; varying vec2 vU;
+void main(){
+  vec3 p=aP; vec3 n=aN; vec3 rd=normalize(aP+vec3(0.0001));
+  float rip=sin(p.y*9.0-uT*4.0)*0.5+0.5;
+  p+=rd*uFx.x*(0.02+0.11*uBass*rip+0.05*uBeat);
+  float a=uFx.y*p.y*(2.2*sin(uT*0.9)*(0.3+uMid*1.4)+uBeat*0.6);
+  float c=cos(a); float s=sin(a); mat2 r=mat2(c,-s,s,c); p.xz=r*p.xz; n.xz=r*n.xz;
+  float band=floor(p.y*7.0+uT*0.7); float h=fract(sin(band*91.7)*43758.5);
+  p.x+=uFx.z*(h-0.5)*(0.3*uBeat+0.2*uBass);
+  float nz=fract(sin(dot(floor(aP*13.0),vec3(12.9,78.2,37.7)))*43758.5);
+  p+=rd*uFx.w*nz*(0.24*uBeat+0.14*uTreb+0.05*uBass);
+  p*=1.0+0.06*uBeat+0.05*uBass;
+  vec4 mv=uMV*vec4(p,1.0); vP=mv.xyz; vN=mat3(uMV[0].xyz,uMV[1].xyz,uMV[2].xyz)*n; vU=aU; gl_Position=uPr*mv;
+}`;
+    const fs=`precision mediump float;
+uniform sampler2D uTex; uniform vec4 uCol; uniform float uHasTex; uniform float uMode; uniform float uPulse; uniform float uCut; uniform vec3 uRim;
+varying vec3 vN; varying vec3 vP; varying vec2 vU;
+void main(){
+  vec4 base=uCol; if(uHasTex>0.5) base*=texture2D(uTex,vU);
+  if(uCut>0.5&&base.a<0.35) discard;
+  vec3 n=normalize(vN); vec3 v=normalize(-vP); if(dot(n,v)<0.0) n=-n;
+  vec3 l=normalize(vec3(0.4,0.7,0.6));
+  float d=max(dot(n,l),0.0); float sp=pow(max(dot(n,normalize(l+v)),0.0),32.0); float rim=pow(1.0-max(dot(n,v),0.0),2.5);
+  vec3 c=base.rgb*(0.4+0.75*d)+vec3(sp*0.25)+uRim*rim*(0.3+0.9*uPulse);
+  if(uMode>1.5) gl_FragColor=vec4(uRim*(rim*1.5+0.1),1.0);
+  else if(uMode>0.5){ float L=clamp(dot(c,vec3(0.3,0.59,0.11)),0.0,1.0); gl_FragColor=vec4(L,L,L,L); }
+  else gl_FragColor=vec4(min(c,vec3(1.0)),1.0);
+}`;
+    const pr=gl.createProgram(); gl.attachShader(pr,sh(gl.VERTEX_SHADER,vs)); gl.attachShader(pr,sh(gl.FRAGMENT_SHADER,fs));
+    gl.bindAttribLocation(pr,0,'aP'); gl.bindAttribLocation(pr,1,'aN'); gl.bindAttribLocation(pr,2,'aU'); gl.linkProgram(pr);
+    if(!gl.getProgramParameter(pr,gl.LINK_STATUS)) throw new Error('link');
+    const loc={}; ['uMV','uPr','uT','uBass','uBeat','uMid','uTreb','uFx','uTex','uCol','uHasTex','uMode','uCut','uRim','uPulse'].forEach(k=>loc[k]=gl.getUniformLocation(pr,k));
+    c.addEventListener('webglcontextlost',e=>{ e.preventDefault(); MDL.gpu=null; MDL.gl=null; },false);
+    MDL.gl=gl; MDL.cv=c; MDL.prog=pr; MDL.loc=loc; MDL.two=two;
+  }catch(e){ MDL.dead=true; MDL.gl=null; window.__prismModelGL=String(e&&e.message||e); }
+  return MDL.gl;
+}
+function mdlUpload(){
+  const gl=MDL.gl, d=MDL.data; if(!gl||!d) return;
+  if(MDL.gpu) for(const G of MDL.gpu){ gl.deleteBuffer(G.p); gl.deleteBuffer(G.n); gl.deleteBuffer(G.u); gl.deleteBuffer(G.i); if(G.tex) gl.deleteTexture(G.tex); }
+  const mk=(target,arr)=>{ const b=gl.createBuffer(); gl.bindBuffer(target,b); gl.bufferData(target,arr,gl.STATIC_DRAW); return b; };
+  MDL.gpu=d.groups.map(G=>{
+    let tex=null;
+    if(G.img){
+      let src=G.img; const w=src.naturalWidth||src.width, h=src.naturalHeight||src.height, lim=Math.min(2048,gl.getParameter(gl.MAX_TEXTURE_SIZE));
+      const pot=v=>Math.min(lim,Math.pow(2,Math.round(Math.log2(Math.max(1,v)))));
+      if(w>lim||h>lim||!MDL.two){ const k=document.createElement('canvas'); k.width=pot(w); k.height=pot(h); k.getContext('2d').drawImage(src,0,0,k.width,k.height); src=k; }
+      tex=gl.createTexture(); gl.bindTexture(gl.TEXTURE_2D,tex); gl.pixelStorei(gl.UNPACK_FLIP_Y_WEBGL,false);
+      try{ gl.texImage2D(gl.TEXTURE_2D,0,gl.RGBA,gl.RGBA,gl.UNSIGNED_BYTE,src); gl.generateMipmap(gl.TEXTURE_2D); gl.texParameteri(gl.TEXTURE_2D,gl.TEXTURE_MIN_FILTER,gl.LINEAR_MIPMAP_LINEAR); gl.texParameteri(gl.TEXTURE_2D,gl.TEXTURE_MAG_FILTER,gl.LINEAR); }
+      catch(e){ gl.deleteTexture(tex); tex=null; }
+    }
+    return {p:mk(gl.ARRAY_BUFFER,G.P),n:mk(gl.ARRAY_BUFFER,G.N),u:mk(gl.ARRAY_BUFFER,G.U),i:mk(gl.ELEMENT_ARRAY_BUFFER,G.I),count:G.I.length,tex:tex,col:G.col,cut:G.cut};
+  });
+}
+function mdlSet(data,own){
+  MDL.data=data; MDL.own=own; MDL.gpu=null;
+  /* a thin sample of points, used to draw the model on devices without WebGL */
+  let total=0; for(const G of data.groups) total+=G.n; const step=Math.max(1,Math.ceil(total/2600)), pts=[];
+  for(const G of data.groups) for(let k=0;k<G.n;k+=step) pts.push(G.P[k*3],G.P[k*3+1],G.P[k*3+2]);
+  MDL.pts=new Float32Array(pts);
+  window.__prismModel={own:own,tris:data.tris,groups:data.groups.length,textured:data.groups.filter(G=>G.img).length};
+}
+const MDLDB={
+  open(){ return new Promise((ok,no)=>{ try{ const r=indexedDB.open('prism',1); r.onupgradeneeded=()=>r.result.createObjectStore('files'); r.onsuccess=()=>ok(r.result); r.onerror=()=>no(r.error); }catch(e){ no(e); } }); },
+  async put(v){ try{ const db=await this.open(); await new Promise((ok,no)=>{ const tx=db.transaction('files','readwrite'); v===null?tx.objectStore('files').delete('model'):tx.objectStore('files').put(v,'model'); tx.oncomplete=ok; tx.onerror=no; tx.onabort=no; }); db.close(); return true; }catch(e){ return false; } },
+  async get(){ try{ const db=await this.open(); const v=await new Promise((ok,no)=>{ const r=db.transaction('files').objectStore('files').get('model'); r.onsuccess=()=>ok(r.result||null); r.onerror=no; }); db.close(); return v; }catch(e){ return null; } }
+};
+const MDL_ERR={notglb:'That is not a .glb file. From a download page, choose the GLB version.',packed:'That model is compressed in a way Prism cannot read. Try another GLB version of it.',split:'That model keeps its data in separate files. Choose a single .glb file instead.',big:'That model is too detailed for Prism. Try a simpler one.',empty:'No 3D shape was found in that file.'};
+async function mdlLoad(buf,keep){
+  try{
+    const data=await readGLB(buf); mdlSet(data,true); say('');
+    if(keep){ const saved=buf.byteLength<=80e6&&await MDLDB.put(buf); if(!saved) say('Model loaded. It is too large to keep, so choose it again after closing the page.'); }
+  }catch(e){
+    MDL.err=String(e&&e.message||e); window.__prismModelErr=MDL.err;
+    if(keep) say(MDL_ERR[MDL.err]||'That model could not be read. A .glb file works best.');
+  }
+  if(typeof modeUi==='function') modeUi();
+}
+function mModel(t){
+  if(!MDL.data) mdlSet(builtInModel(),false);
+  if(!MDL.tried){ MDL.tried=true; MDLDB.get().then(v=>{ if(v&&v.byteLength&&!MDL.own) mdlLoad(v,false); }); }
+  fade(0.55);
+  const m=Math.min(W,H), cx=W/2, cy=H/2, target=(pbeat(t)>>3)%4;
+  for(let k=0;k<4;k++) MDL.fx[k]+=((k===target?1:0)-MDL.fx[k])*0.06;     /* the way it bends changes every eight beats */
+  MDL.spin+=0.006+level*0.02+beat*0.03;
+  const rx=0.25+0.18*Math.sin(t*0.0003), gl=mdlGL();
+  if(gl){
+    if(!MDL.gpu) mdlUpload();
+    const L=MDL.loc, rim=colRGB(0.55);
+    gl.viewport(0,0,MDL.cv.width,MDL.cv.height); gl.clearColor(0,0,0,0); gl.clear(gl.COLOR_BUFFER_BIT|gl.DEPTH_BUFFER_BIT);
+    gl.enable(gl.DEPTH_TEST); gl.disable(gl.CULL_FACE); gl.disable(gl.BLEND); gl.useProgram(MDL.prog);
+    gl.uniformMatrix4fv(L.uMV,false,M4.view(MDL.spin,rx,3.5)); gl.uniformMatrix4fv(L.uPr,false,M4.persp(0.66,0.1,20));
+    gl.uniform1f(L.uT,(t*0.001)%1000); gl.uniform1f(L.uBass,Math.min(1.5,bass)); gl.uniform1f(L.uBeat,beat); gl.uniform1f(L.uPulse,beat); gl.uniform1f(L.uMid,Math.min(1.5,mid)); gl.uniform1f(L.uTreb,Math.min(1.5,treb));
+    gl.uniform4fv(L.uFx,MDL.fx); gl.uniform1f(L.uMode,MONO?1:WIRE?2:0); gl.uniform3fv(L.uRim,rim); gl.uniform1i(L.uTex,0);
+    for(const G of MDL.gpu||[]){
+      gl.bindBuffer(gl.ARRAY_BUFFER,G.p); gl.enableVertexAttribArray(0); gl.vertexAttribPointer(0,3,gl.FLOAT,false,0,0);
+      gl.bindBuffer(gl.ARRAY_BUFFER,G.n); gl.enableVertexAttribArray(1); gl.vertexAttribPointer(1,3,gl.FLOAT,false,0,0);
+      gl.bindBuffer(gl.ARRAY_BUFFER,G.u); gl.enableVertexAttribArray(2); gl.vertexAttribPointer(2,2,gl.FLOAT,false,0,0);
+      gl.bindBuffer(gl.ELEMENT_ARRAY_BUFFER,G.i);
+      gl.uniform4fv(L.uCol,G.col); gl.uniform1f(L.uHasTex,G.tex?1:0); gl.uniform1f(L.uCut,G.cut?1:0);
+      if(G.tex){ gl.activeTexture(gl.TEXTURE0); gl.bindTexture(gl.TEXTURE_2D,G.tex); }
+      gl.drawElements(gl.TRIANGLES,G.count,gl.UNSIGNED_INT,0);
+    }
+    g.imageSmoothingEnabled=true; g.imageSmoothingQuality='high';
+    g.drawImage(MDL.cv,cx-m/2,cy-m/2,m,m);
+  }else{
+    /* no WebGL on this device: show the model as a cloud of points instead */
+    const P=MDL.pts, cyw=Math.cos(MDL.spin), syw=Math.sin(MDL.spin), cxw=Math.cos(rx), sxw=Math.sin(rx), k=1+0.1*bass+0.06*beat, sz=Math.max(1.5,m*0.006);
+    for(let q=0;q<P.length;q+=3){
+      const x=P[q]*k, y=P[q+1]*k, z=P[q+2]*k, x2=x*cyw+z*syw, z2=-x*syw+z*cyw, y2=y*cxw-z2*sxw, z3=y*sxw+z2*cxw, f=3.5/(3.5-z3)*0.8;
+      g.fillStyle=col(0.3+z3*0.3,0.9); g.fillRect(cx+x2*m*0.5*f-sz/2,cy-y2*m*0.5*f-sz/2,sz,sz);
+    }
   }
 }
-const GENERIC=[['Scope',mScope],['Bars',mBars],['Radial',mRadial],['Mirror',mMirror],['Blob',mBlob],['Ferrofluid',mFerro],['Particles',mParticles],['Kaleidoscope',mKaleido],['Tunnel',mTunnel],['Ribbons',mRibbons],['Orbs',mOrbs],['Terrain',mTerrain],['X-Y',mXY],['Dots',mDots],['Lobes',mLobes],['Spikes',mSpikes],['Area',mArea],['Contours',mContours],['Disc 3D',mDisc],['Picture 2D',mPic2D],['Picture 3D',mPic3D]];
+const GENERIC=[['Scope',mScope],['Bars',mBars],['Radial',mRadial],['Mirror',mMirror],['Blob',mBlob],['Ferrofluid',mFerro],['Particles',mParticles],['Kaleidoscope',mKaleido],['Tunnel',mTunnel],['Ribbons',mRibbons],['Orbs',mOrbs],['Terrain',mTerrain],['X-Y',mXY],['Dots',mDots],['Lobes',mLobes],['Spikes',mSpikes],['Area',mArea],['Contours',mContours],['Disc 3D',mDisc],['Picture 2D',mPic2D],['Model 3D',mModel]];
 let MODES=GENERIC.slice();
 
 /* ---------- buffers and style pipelines ---------- */
@@ -1873,7 +2103,7 @@ function drawRecordTop(d){
   }
   /* label */
   const lr=Rr*0.34, lc=stops?stops[0]:[217,82,43], lc2=stops?stops[2%stops.length]:[40,40,44];
-  const cover=kind==='file'&&playlist[trackIdx]?playlist[trackIdx].img:null;
+  const cover=kind==='file'&&playlist[trackIdx]?playlist[trackIdx].img:(spotOn()&&SPOT.img?SPOT.img:null);
   G.save(); G.translate(cx,cy); G.rotate(d.rot);
   if(cover&&cover.width&&cover.height){
     const sq=Math.min(cover.width,cover.height);
@@ -1897,9 +2127,9 @@ function drawRecordTop(d){
   /* S-shaped tonearm on a pivot beside the platter. It starts at the outer groove, takes five minutes to reach the run-out,
      then lifts, returns to the start and carries on. It parks on its rest when nothing is playing. */
   const now=performance.now(), dt=Math.min(0.1,Math.max(0,(now-(armClock||now))/1000)); armClock=now;
-  const playing=live&&!(kind==='file'&&trackPaused());
+  const sf=spotFrac(), playing=sf!==null||(live&&!(kind==='file'&&trackPaused()));
   if(playing) armT+=dt*(location.hash==='#armfast'?40:1); else armT=0;   /* #armfast is only for checking the full sweep quickly */
-  const CYC=300, RET=4, ph=armT%(CYC+RET), returning=playing&&ph>CYC;
+  const CYC=300, RET=4, ph=sf!==null?sf*CYC:armT%(CYC+RET), returning=playing&&ph>CYC;   /* with Spotify linked the arm follows the real position in the track */
   const rStart=0.95*0.92, rEnd=0.40*0.92;
   const phiT=armPhiFor(!playing?ARM.rest:returning?rStart:rStart+(rEnd-rStart)*(ph/CYC));
   armPhi+=(phiT-armPhi)*0.055;
@@ -2266,7 +2496,7 @@ addEventListener('keydown',e=>{
 
 /* ---------- favourites ---------- */
 let favs=[], favPos=-1;
-try{ const fv=JSON.parse(localStorage.getItem('prism-favs')||'[]'); if(Array.isArray(fv)) favs=fv.filter(f=>f&&STYLES[f.s]&&typeof f.m==='string'&&f.m!=='Lyrics').slice(0,12); }catch(e){}
+try{ const fv=JSON.parse(localStorage.getItem('prism-favs')||'[]'); if(Array.isArray(fv)) favs=fv.filter(f=>f&&STYLES[f.s]&&typeof f.m==='string'&&f.m!=='Lyrics').slice(0,12); favs.forEach(f=>{ if(f.m==='Picture 3D') f.m='Model 3D'; }); }catch(e){}
 const curLook=()=>({s:style,m:MODES[mode]?MODES[mode][0]:'',p:palName});
 const sameLook=(a,b)=>a.s===b.s&&a.m===b.m&&(!!STYLES[a.s].noPal||a.p===b.p);
 function saveFavs(){ try{ localStorage.setItem('prism-favs',JSON.stringify(favs)); }catch(e){} }
@@ -2450,13 +2680,21 @@ $('bClicks').onclick=e=>{
 
 /* ---------- options that belong to particular display modes ---------- */
 function modeUi(){
-  const nm=MODES[mode]?MODES[mode][0]:'', tr=nm==='Scope'||nm==='X-Y', pc=nm.indexOf('Picture')===0;
-  $('optGrp').hidden=!(tr||pc); $('bSmooth').hidden=!tr; $('bPic').hidden=!pc;
+  const nm=MODES[mode]?MODES[mode][0]:'', tr=nm==='Scope'||nm==='X-Y', pc=nm.indexOf('Picture')===0, md=nm==='Model 3D';
+  $('optGrp').hidden=!(tr||pc||md); $('bSmooth').hidden=!tr; $('bPic').hidden=!pc;
+  $('bMdl').hidden=!md; $('bMdlReset').hidden=!(md&&MDL.own);
   let own=false; try{ own=!!localStorage.getItem('prism-pic'); }catch(e){}
   $('bPicReset').hidden=!(pc&&(own||picOwn));
   $('bSmooth').setAttribute('aria-pressed',String(smoothTrace));
 }
 let picOwn=false;
+$('bMdl').onclick=()=>$('mdlFile').click();
+$('mdlFile').onchange=e=>{
+  const f=e.target.files[0]; e.target.value=''; if(!f) return;
+  say('Reading the model...');
+  f.arrayBuffer().then(b=>mdlLoad(b,true)).catch(()=>say('That file could not be opened.'));
+};
+$('bMdlReset').onclick=()=>{ mdlSet(builtInModel(),false); MDL.tried=true; MDLDB.put(null); modeUi(); };
 $('bSmooth').onclick=()=>{ smoothTrace=!smoothTrace; try{ localStorage.setItem('prism-smooth',smoothTrace?'1':'0'); }catch(e){} modeUi(); };
 function loadPicture(url,keep){
   const im=new Image();
@@ -2481,6 +2719,103 @@ $('disc').addEventListener('click',()=>{
   const i=MODES.findIndex(m=>m[0]==='Ferrofluid'); if(i>=0) setMode(i);
   say(ferroRainbow?'Rainbow ferrofluid on. Press the record again to switch it off.':'Rainbow ferrofluid off.');
 });
+
+/* ---------- Spotify link: shows what is playing on your Spotify account. It cannot hear the music, so a sound source is still needed ---------- */
+const SPOT={id:'',tok:'',ref:'',exp:0,title:'',img:null,imgUrl:'',dur:0,prog:0,at:0,playing:false,timer:null,shown:'',prev:''};
+try{ const s0=JSON.parse(localStorage.getItem('prism-spotify')||'{}'); SPOT.id=String(s0.id||''); SPOT.tok=String(s0.tok||''); SPOT.ref=String(s0.ref||''); SPOT.exp=+s0.exp||0; }catch(e){}
+const spotSave=()=>{ try{ localStorage.setItem('prism-spotify',JSON.stringify({id:SPOT.id,tok:SPOT.tok,ref:SPOT.ref,exp:SPOT.exp})); }catch(e){} };
+const spotRedirect=()=>location.origin+location.pathname;
+function spotOn(){ return !!SPOT.title&&(kind==='mic'||kind==='tab'); }
+function spotFrac(){
+  if(!spotOn()||!SPOT.playing||!SPOT.dur) return null;
+  return Math.max(0,Math.min(1,(SPOT.prog+(performance.now()-SPOT.at))/SPOT.dur));
+}
+function spotUi(text){
+  const on=!!(SPOT.tok||SPOT.ref);
+  $('bSp').textContent=on?'Disconnect':'Connect'; $('bSp').setAttribute('aria-pressed',String(on)); $('spId').disabled=on;
+  if($('spId').value!==SPOT.id&&document.activeElement!==$('spId')) $('spId').value=SPOT.id;
+  $('spMsg').textContent=text!==undefined?text:(on?(SPOT.title?'Now playing: '+SPOT.title:'Connected. Nothing is playing on Spotify at the moment.'):'In your Spotify developer app, set the redirect address to '+spotRedirect()+' then paste its Client ID above and press Connect.');
+}
+function spotShow(){
+  /* the readout and record label follow Spotify while the microphone or tab audio is the source */
+  const cur=$('now').textContent;
+  if(spotOn()){ if(cur!==SPOT.title){ if(cur!==SPOT.shown) SPOT.prev=cur; setNow(SPOT.title); SPOT.shown=SPOT.title; } }
+  else{ if(SPOT.shown&&cur===SPOT.shown&&SPOT.prev) setNow(SPOT.prev); SPOT.shown=''; }
+}
+function spotOff(text){
+  SPOT.tok=''; SPOT.ref=''; SPOT.exp=0; SPOT.title=''; SPOT.img=null; SPOT.imgUrl=''; SPOT.playing=false; spotSave();
+  clearTimeout(SPOT.timer); SPOT.timer=null; spotShow(); spotUi(text);
+}
+async function spotToken(body){
+  body.client_id=SPOT.id;
+  const r=await fetch('https://accounts.spotify.com/api/token',{method:'POST',headers:{'Content-Type':'application/x-www-form-urlencoded'},body:new URLSearchParams(body).toString()});
+  const j=await r.json().catch(()=>({}));
+  if(!r.ok||!j.access_token) throw new Error(j.error_description||j.error||('HTTP '+r.status));
+  SPOT.tok=j.access_token; if(j.refresh_token) SPOT.ref=j.refresh_token; SPOT.exp=Date.now()+((+j.expires_in||3600)-60)*1000; spotSave();
+}
+async function spotPoll(){
+  clearTimeout(SPOT.timer); SPOT.timer=null;
+  if(!SPOT.tok&&!SPOT.ref) return;
+  let next=5000;
+  try{
+    if(document.hidden) next=8000;
+    else{
+      if(!SPOT.tok||Date.now()>SPOT.exp){ if(!SPOT.ref) throw new Error('expired'); await spotToken({grant_type:'refresh_token',refresh_token:SPOT.ref}); }
+      const r=await fetch('https://api.spotify.com/v1/me/player/currently-playing?additional_types=episode',{headers:{Authorization:'Bearer '+SPOT.tok}});
+      if(r.status===401){ SPOT.tok=''; SPOT.exp=0; if(!SPOT.ref) throw new Error('expired'); next=300; }
+      else if(r.status===429){ next=Math.min(120,Math.max(5,+r.headers.get('Retry-After')||10))*1000; }
+      else if(r.status===403){ spotUi('Spotify refused the request. The account that owns the developer app needs Premium, and your account must be added to the app under User Management.'); next=30000; }
+      else if(r.status===204||r.status===202){ SPOT.title=''; SPOT.playing=false; SPOT.img=null; SPOT.imgUrl=''; spotUi(); }
+      else if(r.ok){
+        const j=await r.json(), it=j&&j.item;
+        if(it){
+          const who=(it.artists||[]).map(a=>a.name).filter(Boolean).join(', ')||(it.show&&it.show.name)||'';
+          SPOT.title=(it.name||'Unknown')+(who?' - '+who:''); SPOT.dur=+it.duration_ms||0; SPOT.prog=+j.progress_ms||0; SPOT.at=performance.now(); SPOT.playing=!!j.is_playing;
+          const ims=(it.album&&it.album.images)||it.images||[], pic=ims.length?(ims.find(i=>i.width&&i.width<=640)||ims[0]).url:'';
+          if(pic!==SPOT.imgUrl){
+            SPOT.imgUrl=pic; SPOT.img=null;
+            if(pic){ const im=new Image(); im.crossOrigin='anonymous'; im.onload=()=>{ if(SPOT.imgUrl===pic) SPOT.img=im; }; im.src=pic; }   /* loaded with permission to draw, so the screen can still be recorded */
+          }
+        }else{ SPOT.title=''; SPOT.playing=false; }
+        spotUi();
+      }
+    }
+  }catch(e){
+    const m=String(e&&e.message||e);
+    if(m==='expired'||/invalid_grant|revoked|invalid_client/i.test(m)) return spotOff('Spotify needs connecting again. Press Connect.');
+    next=15000;
+  }
+  spotShow();
+  SPOT.timer=setTimeout(spotPoll,next);
+}
+async function spotConnect(){
+  const id=$('spId').value.trim();
+  if(!/^[0-9a-zA-Z]{20,64}$/.test(id)) return spotUi('That does not look like a Client ID. It is a 32-character code on your app page at developer.spotify.com.');
+  if(framed) return spotUi('Spotify can only be linked from the hosted page, not from this preview.');
+  if(!(window.crypto&&crypto.subtle)) return spotUi('This browser cannot make the secure sign-in request.');
+  SPOT.id=id; spotSave();
+  const rnd=n=>{ const a=new Uint8Array(n); crypto.getRandomValues(a); return Array.from(a,b=>'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789'[b%62]).join(''); };
+  const ver=rnd(64), state=rnd(16), dig=new Uint8Array(await crypto.subtle.digest('SHA-256',new TextEncoder().encode(ver)));
+  const chal=btoa(String.fromCharCode.apply(null,dig)).replace(/\+/g,'-').replace(/\//g,'_').replace(/=+$/,'');
+  try{ localStorage.setItem('prism-spotify-pkce',JSON.stringify({v:ver,s:state})); }catch(e){ return spotUi('This browser is blocking storage, which the sign-in needs.'); }
+  location.assign('https://accounts.spotify.com/authorize?'+new URLSearchParams({response_type:'code',client_id:id,scope:'user-read-currently-playing user-read-playback-state',code_challenge_method:'S256',code_challenge:chal,redirect_uri:spotRedirect(),state:state}).toString());
+}
+$('bSp').onclick=()=>{ (SPOT.tok||SPOT.ref)?spotOff():spotConnect(); };
+$('spId').addEventListener('keydown',e=>e.stopPropagation());
+(async()=>{
+  /* coming back from the Spotify sign-in page */
+  const q=new URLSearchParams(location.search), code=q.get('code'), err=q.get('error'), state=q.get('state');
+  let pk=null; try{ pk=JSON.parse(localStorage.getItem('prism-spotify-pkce')||'null'); }catch(e){}
+  if((code||err)&&pk&&state===pk.s){
+    try{ localStorage.removeItem('prism-spotify-pkce'); history.replaceState(null,'',location.pathname+location.hash); }catch(e){}
+    setTimeout(()=>setFold($('bFoldSp'),true),0);
+    if(err){ spotUi(err==='access_denied'?'Spotify sign-in was cancelled.':'Spotify sign-in failed: '+err); return; }
+    try{ await spotToken({grant_type:'authorization_code',code:code,redirect_uri:spotRedirect(),code_verifier:pk.v}); spotUi('Connected.'); }
+    catch(e){ spotOff('Spotify sign-in failed: '+String(e&&e.message||e)); return; }
+  }else spotUi();
+  spotPoll();
+})();
+document.addEventListener('visibilitychange',()=>{ if(!document.hidden&&(SPOT.tok||SPOT.ref)) spotPoll(); });
 
 /* ---------- collapsible menu ---------- */
 let folds={};
@@ -2530,6 +2865,9 @@ const HELP={
   bSmooth:'Switches the Scope and X-Y traces between the raw, jagged signal and a soft, flowing line.',
   bPic:'Lets you choose a picture from this device. The Picture modes then bend and reshape it in time with the music.',
   bPicReset:'Goes back to the built-in picture.',
+  bSp:'Links Prism to your Spotify account so it can show the track that is playing, put its cover on the record and move the tonearm with the song. It cannot hear Spotify, so keep the microphone on.',
+  bMdl:'Lets you choose a 3D model from this device. It must be a single .glb file. The model then spins, swells and twists in time with the music.',
+  bMdlReset:'Goes back to the built-in 3D shape.',
   bClicks:'Turns the clicking sounds of the keys and sliders on or off.'
 };
 let tipTimer=null, tipFor=null, tipShown=null;
