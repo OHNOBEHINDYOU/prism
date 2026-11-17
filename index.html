@@ -91,7 +91,7 @@ button:focus-visible{outline:2px solid #d9522b;outline-offset:2px}
 .fader:focus-visible{outline:2px solid #d9522b;outline-offset:2px}
 .fad .lbl{flex:none}
 .fad .lbl::after{display:none}
-#file{position:absolute;width:1px;height:1px;opacity:0;pointer-events:none}
+#file,#picFile{position:absolute;width:1px;height:1px;opacity:0;pointer-events:none}
 #now{flex:1;min-width:0}
 #bpm{flex:none;white-space:nowrap}
 .sel{flex:1;min-width:0;height:34px;padding:0 10px;font:400 13px/1 var(--read);text-transform:uppercase;letter-spacing:.04em;color:var(--phos);background:#060d09;border:1px solid #6d7174;border-radius:3px;box-shadow:inset 0 2px 6px #000;-webkit-appearance:none;appearance:none}
@@ -199,6 +199,15 @@ body.quiet #screen{margin:0!important;border-radius:0!important;box-shadow:none!
   <div class="grp">
     <span class="lbl">Display mode</span>
     <div class="keys scroll" id="modes"></div>
+  </div>
+  <div class="grp" id="optGrp" hidden>
+    <span class="lbl">Mode options</span>
+    <div class="keys">
+      <button id="bSmooth" type="button" aria-pressed="false" hidden>Smooth lines</button>
+      <button id="bPic" type="button" hidden>Choose picture</button>
+      <button id="bPicReset" type="button" hidden>Reset picture</button>
+    </div>
+    <input type="file" id="picFile" accept="image/*" tabindex="-1" aria-hidden="true">
   </div>
   <div class="grp" id="palGrp">
     <span class="lbl">Trace colour</span>
@@ -1041,33 +1050,306 @@ function mOrbs(t){
   }
   g.closePath(); g.strokeStyle=col(level,0.95); g.lineWidth=2.5*U; g.stroke();
 }
+/* ---------- shared helpers for the newer display modes ---------- */
+const SX=new Float32Array(1100), SY=new Float32Array(1100);
+function smoothLine(n){
+  g.moveTo(SX[0],SY[0]);
+  for(let i=1;i<n-1;i++) g.quadraticCurveTo(SX[i],SY[i],(SX[i]+SX[i+1])/2,(SY[i]+SY[i+1])/2);
+  g.lineTo(SX[n-1],SY[n-1]);
+}
+function hGrad(a0,a1,alpha){ const gr=g.createLinearGradient(0,0,W,0); for(let k=0;k<=6;k++) gr.addColorStop(k/6,col(a0+(a1-a0)*k/6,alpha)); return gr; }
+let smoothTrace=false;
+try{ smoothTrace=localStorage.getItem('prism-smooth')==='1'; }catch(e){}
+
 function mScope(){
   fade(0.34);
   const n=wave.length>>1; let s=0;
   for(let i=1;i<n;i++){ if(wave[i-1]<128&&wave[i]>=128){ s=i; break; } }
   g.beginPath();
-  for(let i=0;i<n;i++){
-    const x=i/(n-1)*W, y=H/2-(wave[s+i]-128)/128*H*0.42*gain; i?g.lineTo(x,y):g.moveTo(x,y);
+  if(smoothTrace){
+    /* average neighbouring samples and join them with curves for a soft, flowing line */
+    const P=110, st=n/P;
+    for(let i=0;i<P;i++){ const a=Math.floor(i*st); let v=0, c=0; for(let k=a;k<a+st+4&&k<n;k++){ v+=wave[s+k]; c++; } SX[i]=i/(P-1)*W; SY[i]=H/2-(v/c-128)/128*H*0.42*gain; }
+    smoothLine(P);
+  }else{
+    for(let i=0;i<n;i++){ const x=i/(n-1)*W, y=H/2-(wave[s+i]-128)/128*H*0.42*gain; i?g.lineTo(x,y):g.moveTo(x,y); }
   }
-  g.lineJoin='round'; g.shadowColor=col(0,1); g.shadowBlur=14*U;
-  g.strokeStyle=col(0,1); g.lineWidth=2.2*U; g.stroke(); g.shadowBlur=0;
+  g.lineJoin='round'; g.lineCap='round'; g.shadowColor=col(0,1); g.shadowBlur=14*U;
+  g.strokeStyle=col(0,1); g.lineWidth=2.2*U; g.stroke(); g.shadowBlur=0; g.lineCap='butt';
 }
 function mXY(){
   fade(0.22);
-  const m=Math.min(W,H)*0.44*gain;
+  const m=Math.min(W,H)*0.44*gain, d=24;
+  const px=i=>stereo?(waveL[i]-128)/128:(wave[i]-128)/128, py=i=>stereo?(waveR[i]-128)/128:(wave[i+d]-128)/128;
   g.beginPath();
-  if(stereo){
-    for(let i=0;i<1024;i++){ const x=W/2+(waveL[i]-128)/128*m, y=H/2-(waveR[i]-128)/128*m; i?g.lineTo(x,y):g.moveTo(x,y); }
+  if(smoothTrace){
+    const P=200, st=5;
+    for(let i=0;i<P;i++){ let x=0, y=0; for(let k=0;k<st;k++){ x+=px(i*st+k); y+=py(i*st+k); } SX[i]=W/2+x/st*m; SY[i]=H/2-y/st*m; }
+    smoothLine(P);
+  }else if(stereo){
+    for(let i=0;i<1024;i++){ const x=W/2+px(i)*m, y=H/2-py(i)*m; i?g.lineTo(x,y):g.moveTo(x,y); }
   }else{
-    const d=24, n=wave.length-d;
-    for(let i=0;i<n;i+=2){ const x=W/2+(wave[i]-128)/128*m, y=H/2-(wave[i+d]-128)/128*m; i?g.lineTo(x,y):g.moveTo(x,y); }
+    for(let i=0;i<wave.length-d;i+=2){ const x=W/2+px(i)*m, y=H/2-py(i)*m; i?g.lineTo(x,y):g.moveTo(x,y); }
   }
   g.lineJoin='round'; g.lineCap='round'; g.shadowColor=col(0.1,1); g.shadowBlur=12*U;
-  g.strokeStyle=col(0.1,0.9); g.lineWidth=1.6*U; g.stroke(); g.shadowBlur=0;
-  g.fillStyle=col(0.1,0.9); g.beginPath(); g.arc(W/2+(stereo?(waveL[0]-128)/128*m:(wave[0]-128)/128*m),H/2-(stereo?(waveR[0]-128)/128*m:(wave[24]-128)/128*m),1.4*U,0,TAU); g.fill();
+  g.strokeStyle=col(0.1,0.9); g.lineWidth=(smoothTrace?2:1.6)*U; g.stroke(); g.shadowBlur=0;
+  g.fillStyle=col(0.1,0.9); g.beginPath(); g.arc(W/2+px(0)*m,H/2-py(0)*m,1.4*U,0,TAU); g.fill();
   g.lineCap='butt';
 }
-const GENERIC=[['Scope',mScope],['X-Y',mXY],['Bars',mBars],['Radial',mRadial],['Ribbons',mRibbons],['Particles',mParticles],['Tunnel',mTunnel],['Kaleidoscope',mKaleido],['Terrain',mTerrain],['Orbs',mOrbs]];
+
+/* mirror: blocky bars that grow both ways from a centre line, bass in the middle */
+function mMirror(){
+  fade(0.3);
+  const n=barsN||Math.max(20,Math.min(64,Math.floor(W/(12*U)))), nb=32, b=bands(nb), gap=2*U, bw=(W-gap*(n+1))/n, cy=H/2, seg=Math.max(3*U,bw*0.9);
+  g.fillStyle=col(0.5,0.6); g.fillRect(0,cy-U*0.5,W,U);
+  for(let i=0;i<n;i++){
+    const d=Math.abs(i-(n-1)/2)/((n-1)/2), v=b[Math.min(nb-1,Math.floor(d*nb*0.9))]*(1-d*0.35);
+    const x=gap+i*(bw+gap), k=Math.max(1,Math.round(v*H*0.42/seg));
+    g.fillStyle=col(i/n*0.9,1);
+    for(let s=0;s<k;s++){ g.fillRect(x,cy-(s+1)*seg+U*0.5,bw,seg-U); g.fillRect(x,cy+s*seg+U*0.5,bw,seg-U); }
+  }
+}
+/* blob: three soft, mirrored envelopes laid over each other */
+function mBlob(t){
+  fade(0.28);
+  const nb=24, b=bands(nb), n=26, cy=H/2;
+  for(let L=0;L<3;L++){
+    const sc=[1,0.72,0.45][L], ph=t*0.0006*(L+1);
+    for(let i=0;i<n;i++){
+      const u=i/(n-1), d=Math.abs(u-0.5)*2, bi=Math.min(nb-1,Math.floor(d*nb*0.8)+L*2);
+      SX[i]=u*W; SY[i]=(0.012+b[bi]*(1-d*d)*0.44*sc*(0.75+0.25*Math.sin(u*9+ph)))*H;
+    }
+    g.beginPath(); g.moveTo(SX[0],cy-SY[0]);
+    for(let i=1;i<n-1;i++) g.quadraticCurveTo(SX[i],cy-SY[i],(SX[i]+SX[i+1])/2,cy-(SY[i]+SY[i+1])/2);
+    g.lineTo(SX[n-1],cy-SY[n-1]); g.lineTo(SX[n-1],cy+SY[n-1]);
+    for(let i=n-2;i>0;i--) g.quadraticCurveTo(SX[i],cy+SY[i],(SX[i]+SX[i-1])/2,cy+(SY[i]+SY[i-1])/2);
+    g.lineTo(SX[0],cy+SY[0]); g.closePath();
+    g.fillStyle=col(0.82+L*0.09,0.62); g.fill();
+  }
+}
+/* area: jagged filled charts rising from the bottom, with one hanging from the top to cross them */
+function mArea(){
+  fade(0.4);
+  const nb=20, b=bands(nb);
+  const layer=(off,sc,base,dir,c,a)=>{
+    g.beginPath(); g.moveTo(0,base);
+    for(let i=0;i<nb;i++) g.lineTo(i/(nb-1)*W,base-dir*(H*0.05+b[(i+off)%nb]*sc*H*0.52));
+    g.lineTo(W,base); g.closePath();
+    g.fillStyle=col(c,a); g.fill(); g.strokeStyle=col(c,1); g.lineWidth=1.5*U; g.lineJoin='round'; g.stroke();
+  };
+  layer(5,1,H,1,0.55,0.35); layer(9,0.45,0,-1,0.92,0.5); layer(0,0.8,H,1,0.5,0.62);
+}
+/* lobes: nested fine lines that swell into almond shapes, one per band */
+function mLobes(){
+  fade(0.3);
+  const lobes=5, b=bands(lobes*2), K=7, n=110, cy=H/2;
+  g.lineWidth=Math.max(1,U); g.strokeStyle=hGrad(0,0.9,0.9);
+  for(let k=-K;k<=K;k++){
+    if(!k) continue;
+    for(let i=0;i<n;i++){
+      const u=i/(n-1), lb=Math.min(lobes-1,Math.floor(u*lobes)), env=Math.abs(Math.sin(u*lobes*Math.PI));
+      SX[i]=u*W; SY[i]=cy+env*env*(0.04+b[lb*2])*H*0.44*(k/K);
+    }
+    g.beginPath(); smoothLine(n); g.stroke();
+  }
+  g.beginPath(); g.moveTo(0,cy); g.lineTo(W,cy); g.stroke();
+}
+/* dots: a waveform built from columns of dots that shrink towards its edge */
+function mDots(){
+  fade(0.42);
+  const cols=barsN?barsN*2+1:Math.max(18,Math.min(50,Math.floor(W/(15*U)))), cw=W/cols, nb=24, b=bands(nb), cy=H/2, maxR=Math.floor(H*0.45/cw);
+  for(let i=0;i<cols;i++){
+    const d=Math.abs(i-(cols-1)/2)/((cols-1)/2), v=b[Math.min(nb-1,Math.floor(d*nb*0.9))]*(1-d*0.3), hh=Math.max(1,Math.round(v*maxR)), x=(i+0.5)*cw;
+    g.fillStyle=col(0.06+i/cols*0.5,1);
+    for(let r=0;r<hh;r++){
+      const rad=cw*0.44*(1-r/hh*0.72), y1=cy-(r+0.5)*cw, y2=cy+(r+0.5)*cw;
+      g.beginPath(); g.arc(x,y1,rad,0,TAU); g.moveTo(x+rad,y2); g.arc(x,y2,rad,0,TAU); g.fill();
+    }
+  }
+}
+/* spikes: fine vertical needles following the loudest moment in each slice of the sound */
+function mSpikes(){
+  fade(0.3);
+  const n=Math.max(36,Math.min(110,Math.floor(W/(6*U)))), cy=H/2, step=Math.max(1,Math.floor(wave.length/n)), b=bands(16);
+  g.lineWidth=Math.max(1,1.4*U); g.lineCap='round'; g.strokeStyle=hGrad(0.86,1.12,1); g.beginPath();
+  for(let i=0;i<n;i++){
+    let pk=0; for(let k=0;k<step;k+=2){ const v=Math.abs(wave[i*step+k]-128); if(v>pk) pk=v; }
+    const h=Math.min(H*0.46,(pk/128*gain*1.4+b[i%16]*0.3)*H*0.45+U*2), x=(i+0.5)/n*W;
+    g.moveTo(x,cy-h); g.lineTo(x,cy+h);
+  }
+  g.stroke(); g.lineCap='butt';
+}
+/* contours: rings like a map of a hill, wobbling more the further out they are */
+function mContours(t){
+  fade(0.25);
+  const b=bands(8), m=Math.min(W,H), K=9, n=96;
+  g.lineWidth=1.6*U; g.lineJoin='round';
+  for(let k=1;k<=K;k++){
+    const r0=m*0.045*k*(1+bass*0.25+beat*0.05);
+    g.beginPath();
+    for(let i=0;i<=n;i++){
+      const a=i/n*TAU; let r=r0;
+      for(let h=0;h<5;h++) r+=r0*0.12*(k/K+0.3)*b[h+1]*Math.sin(a*(h+3)+t*0.0007*(h%2?1:-1)+k*0.25);
+      const x=W/2+Math.cos(a)*r, y=H/2+Math.sin(a)*r; i?g.lineTo(x,y):g.moveTo(x,y);
+    }
+    g.closePath(); g.strokeStyle=col(0.1+k/K*0.5,0.95); g.stroke();
+  }
+}
+/* disc 3D: a tilted wheel of spokes. Each spoke holds a moment of the spectrum, so the sound travels round the wheel */
+const discHist=[], discOrder=[]; let discTick=0, discHead=0;
+function mDisc(t){
+  fade(0.7);
+  const S=96, NB=22, b=bands(NB);
+  if(++discTick%2===0){ discHist[discHead]=Float32Array.from(b); discHead=(discHead+1)%S; }
+  const cx=W/2, cy=H*0.56, m=Math.min(W*0.98,H*1.5), R1=m*0.49, R0=R1*0.17, tilt=0.42, hgt=Math.min(H*0.3,m*0.3), rot=t*0.00012;
+  for(let s=0;s<S;s++) discOrder[s]=s;
+  discOrder.length=S; discOrder.sort((p,q)=>Math.sin(rot+p/S*TAU)-Math.sin(rot+q/S*TAU));
+  g.lineJoin='round'; g.lineWidth=Math.max(1,1.2*U);
+  for(const s of discOrder){
+    const row=discHist[(discHead-1-s+S*2)%S], a=rot+s/S*TAU, ca=Math.cos(a), sa=Math.sin(a)*tilt;
+    g.beginPath(); g.moveTo(cx+ca*R0,cy+sa*R0);
+    for(let j=0;j<NB;j++){ const r=R0+(R1-R0)*j/(NB-1); g.lineTo(cx+ca*r,cy+sa*r-(row?row[j]:0)*hgt*(0.4+0.6*j/NB)); }
+    g.lineTo(cx+ca*R1,cy+sa*R1); g.closePath();
+    g.fillStyle=BGH; g.fill(); g.strokeStyle=col(s/S,1); g.stroke();
+  }
+}
+/* starburst: thick round-ended rays in five-fold symmetry, each tipped with a dot */
+function mStar(t){
+  fade(0.2);
+  const nb=12, b=bands(nb), m=Math.min(W,H), cx=W/2, cy=H/2, sym=5, rot=t*0.0003+beatCount*0.05;
+  g.lineCap='round';
+  for(let L=2;L>=0;L--){
+    for(let i=0;i<nb;i+=1+L){
+      const len=m*(0.07+0.42*b[i])*(1-L*0.2), lw=m*(0.012+0.022*(1-i/nb))*(1+L*0.5)*0.9;
+      for(let s=0;s<sym;s++){
+        const a=rot*(L%2?-1:1)+s/sym*TAU+i*0.37+L*0.5, x=cx+Math.cos(a)*len, y=cy+Math.sin(a)*len;
+        g.strokeStyle=col(0.02+i/nb*0.16+L*0.05,L?0.55:1); g.lineWidth=lw;
+        g.beginPath(); g.moveTo(cx,cy); g.lineTo(x,y); g.stroke();
+        g.fillStyle=col(0.1+i/nb*0.16,1); g.beginPath(); g.arc(x,y,lw*0.75,0,TAU); g.fill();
+      }
+    }
+  }
+  g.lineCap='butt';
+}
+/* ferrofluid: a glossy dark mass that throws out a crown of spikes, tallest where the sound is strongest */
+function mFerro(t){
+  fade(0.45);
+  const nb=24, b=bands(nb), m=Math.min(W,H), cx=W/2, cy=H/2, N=34, P=340, R=m*(0.19+bass*0.08+beat*0.02);
+  const shape=(scale,phase,sharp,amp)=>{
+    g.beginPath();
+    for(let i=0;i<=P;i++){
+      const a=i/P*TAU, u=(((a+phase)/TAU*N)%1+1)%1, sp=Math.pow(Math.abs(Math.cos(u*Math.PI)),sharp);
+      const e=b[Math.min(nb-1,Math.round(Math.abs(((a/TAU*2)%2+2)%2-1)*(nb-1)))];
+      const r=R*scale*(1+amp*(0.1+e*1.6)*sp+0.04*Math.sin(a*3+t*0.001)), x=cx+Math.cos(a)*r, y=cy+Math.sin(a)*r;
+      i?g.lineTo(x,y):g.moveTo(x,y);
+    }
+    g.closePath();
+  };
+  const body=()=>{
+    if(MONO) return 'rgba(255,255,255,.9)';
+    const gr=g.createRadialGradient(cx-R*0.35,cy-R*0.4,R*0.05,cx,cy,R*2.4);
+    gr.addColorStop(0,'#4a4d58'); gr.addColorStop(0.22,'#14151a'); gr.addColorStop(1,'#020203'); return gr;
+  };
+  for(let i=0;i<5;i++){                         /* droplets drifting around it */
+    const a=t*0.0004*(i%2?1:-1)+i*1.3, dd=R*(2.1+0.5*Math.sin(t*0.001+i)), rr=R*(0.05+0.13*b[i*3]);
+    g.beginPath(); g.arc(cx+Math.cos(a)*dd,cy+Math.sin(a)*dd,rr,0,TAU); g.fillStyle=body(); g.fill();
+    g.strokeStyle=col(0.6,0.7); g.lineWidth=U; g.stroke();
+  }
+  g.lineJoin='round';
+  shape(1,t*0.0002,5,1); g.fillStyle=body(); g.fill(); g.strokeStyle=col(0.55,0.95); g.lineWidth=1.6*U; g.stroke();
+  shape(0.6,-t*0.0003,4,0.7); g.fillStyle=body(); g.fill(); g.strokeStyle=col(0.68,0.6); g.lineWidth=U; g.stroke();
+  if(!MONO&&!WIRE){                             /* the shine */
+    g.save(); g.translate(cx-R*0.26,cy-R*0.3); g.rotate(-0.6); g.scale(1,0.5);
+    g.fillStyle='rgba(255,255,255,.2)'; g.beginPath(); g.arc(0,0,R*0.24,0,TAU); g.fill(); g.restore();
+  }
+}
+
+/* ---------- picture modes: your own image, bent by the music ---------- */
+const PG=40;
+let pic=null, picSpin=0, picMorph=0;
+function setPicture(src,w,h){
+  const S=512, c=document.createElement('canvas'); c.width=c.height=S;
+  const x=c.getContext('2d'), sq=Math.min(w,h);
+  x.fillStyle='#000'; x.fillRect(0,0,S,S); x.drawImage(src,(w-sq)/2,(h-sq)/2,sq,sq,0,0,S,S);
+  const tint=['#ff0000','#00ff00','#0000ff'].map(cl=>{
+    const k=document.createElement('canvas'); k.width=k.height=S; const kx=k.getContext('2d');
+    kx.drawImage(c,0,0); kx.globalCompositeOperation='multiply'; kx.fillStyle=cl; kx.fillRect(0,0,S,S); return k;
+  });
+  const sm=document.createElement('canvas'); sm.width=sm.height=PG;
+  const sx=sm.getContext('2d',{willReadFrequently:true}); sx.drawImage(c,0,0,PG,PG);
+  const d=sx.getImageData(0,0,PG,PG).data, cols=[], lum=new Float32Array(PG*PG);
+  for(let i=0;i<PG*PG;i++){ cols[i]='rgb('+d[i*4]+','+d[i*4+1]+','+d[i*4+2]+')'; lum[i]=(d[i*4]*0.3+d[i*4+1]*0.59+d[i*4+2]*0.11)/255; }
+  pic={c:c,tint:tint,cols:cols,lum:lum};
+}
+function defaultPicture(){
+  /* a stand-in until you choose your own: bright rings and a starburst */
+  const S=512, c=document.createElement('canvas'); c.width=c.height=S; const x=c.getContext('2d');
+  const bg=x.createLinearGradient(0,0,S,S); bg.addColorStop(0,'#1b0b3a'); bg.addColorStop(1,'#03203a'); x.fillStyle=bg; x.fillRect(0,0,S,S);
+  const hues=['#ff2bd6','#ffb000','#00f5ff','#7b2ff7','#39ff88','#ff5e3a'];
+  for(let i=0;i<18;i++){ x.fillStyle=hues[i%6]; x.beginPath(); x.moveTo(S/2,S/2); x.arc(S/2,S/2,S*0.72,i/18*TAU,(i+0.5)/18*TAU); x.closePath(); x.globalAlpha=0.5; x.fill(); }
+  x.globalAlpha=1;
+  for(let k=6;k>=1;k--){ x.fillStyle=hues[k%6]; x.beginPath(); x.arc(S/2,S/2,S*0.06*k,0,TAU); x.fill(); x.strokeStyle='#05050b'; x.lineWidth=5; x.stroke(); }
+  x.fillStyle='#fff'; x.beginPath(); x.arc(S/2,S/2,S*0.03,0,TAU); x.fill();
+  setPicture(c,S,S);
+}
+function mPic2D(t){
+  if(!pic) defaultPicture();
+  fade(0.5);
+  const S=512, m=Math.min(W,H)*0.86*(1+beat*0.05+bass*0.04), x0=W/2-m/2, y0=H/2-m/2, fx=(pbeat(t)>>3)%4, b=bands(24), sp=beat*m*0.035+level*m*0.008;
+  const pass=(src,dx)=>{
+    if(fx<2){                                   /* slices that slide with the waveform, across or down */
+      const n=48, sl=S/n, dl=m/n;
+      for(let i=0;i<n;i++){
+        const off=(wave[(i*21)%wave.length]-128)/128*m*0.09*Math.min(2.5,gain)*(0.3+level);
+        if(fx===0) g.drawImage(src,0,i*sl,S,sl,x0+dx+off,y0+i*dl,m,dl+1); else g.drawImage(src,i*sl,0,sl,S,x0+dx+i*dl,y0+off,dl+1,m);
+      }
+    }else if(fx===2){                           /* tiles that swell and shrink with their band */
+      const n=8, sl=S/n, dl=m/n;
+      for(let j=0;j<n;j++) for(let i=0;i<n;i++){ const k=0.5+0.7*b[(i*3+j*5)%24]; g.drawImage(src,i*sl,j*sl,sl,sl,x0+dx+(i+0.5)*dl-dl*k/2,y0+(j+0.5)*dl-dl*k/2,dl*k,dl*k); }
+    }else{                                      /* rings that twist against each other */
+      for(let k=6;k>=0;k--){
+        g.save(); g.beginPath(); g.arc(W/2+dx,H/2,m/2*(k+1)/7,0,TAU); g.clip();
+        g.translate(W/2+dx,H/2); g.rotate((k%2?1:-1)*(b[k*3]*1.3+beat*0.3)); g.drawImage(src,-m/2,-m/2,m,m); g.restore();
+      }
+    }
+  };
+  if(sp>1.5*U&&!MONO){                          /* on a hit the red, green and blue separate */
+    g.globalCompositeOperation='lighter'; pass(pic.tint[0],-sp); pass(pic.tint[1],0); pass(pic.tint[2],sp); g.globalCompositeOperation='source-over';
+  }else pass(pic.c,0);
+}
+const PZ=new Float32Array(PG*PG), PXs=new Float32Array(PG*PG), PYs=new Float32Array(PG*PG), PF=new Float32Array(PG*PG), PORD=new Uint16Array(PG*PG);
+for(let i=0;i<PG*PG;i++) PORD[i]=i;
+function mPic3D(t){
+  if(!pic) defaultPicture();
+  fade(0.55);
+  const b=bands(16), m=Math.min(W,H), cx=W/2, cy=H/2, n=PG, target=(pbeat(t)>>3)%3;
+  /* glide between a relief, a globe and a drum; the lightest parts of the picture stand proud */
+  let dm=target-picMorph; if(dm>1.5) dm-=3; if(dm<-1.5) dm+=3; picMorph=((picMorph+dm*0.05)%3+3)%3;
+  const s0=Math.floor(picMorph)%3, s1=(s0+1)%3, mix=picMorph-Math.floor(picMorph);
+  picSpin+=0.006+level*0.02+beat*0.03;
+  const ry=picSpin, rx=0.45+0.2*Math.sin(t*0.0003), cr=Math.cos(ry), sr2=Math.sin(ry), cxr=Math.cos(rx), sxr=Math.sin(rx), lift=0.25+bass*1.5+beat*0.4;
+  const pos=(sh,u,v,l,out)=>{
+    if(sh===0){ out[0]=u*0.95; out[1]=v*0.95; out[2]=-(l-0.5)*0.34*lift+0.05*b[((u+0.5)*15)|0]*Math.sin(Math.hypot(u,v)*14-t*0.006); }
+    else if(sh===1){ const lon=u*TAU, lat=v*Math.PI, r=0.42*(1+l*0.22*lift); out[0]=r*Math.cos(lat)*Math.sin(lon); out[1]=r*Math.sin(lat); out[2]=r*Math.cos(lat)*Math.cos(lon); }
+    else{ const an=u*TAU, r=0.36*(1+l*0.28*lift); out[0]=r*Math.sin(an); out[1]=v*0.92; out[2]=r*Math.cos(an); }
+  };
+  const A=[0,0,0], B=[0,0,0];
+  for(let j=0;j<n;j++) for(let i=0;i<n;i++){
+    const k=j*n+i, u=i/(n-1)-0.5, v=j/(n-1)-0.5, l=pic.lum[k];
+    pos(s0,u,v,l,A); pos(s1,u,v,l,B);
+    const x=A[0]+(B[0]-A[0])*mix, y=A[1]+(B[1]-A[1])*mix, z=A[2]+(B[2]-A[2])*mix;
+    const x2=x*cr+z*sr2, z2=-x*sr2+z*cr, y2=y*cxr-z2*sxr, z3=y*sxr+z2*cxr, f=2.2/(2.2+z3);
+    PXs[k]=cx+x2*m*0.95*f; PYs[k]=cy+y2*m*0.95*f; PZ[k]=z3; PF[k]=f;
+  }
+  PORD.sort((p,q)=>PZ[q]-PZ[p]);
+  const tile=m/n*1.08*(1+beat*0.25);
+  for(let o=0;o<PORD.length;o++){
+    const k=PORD[o], sz=tile*PF[k];
+    g.fillStyle=MONO?'rgba(255,255,255,'+pic.lum[k].toFixed(2)+')':pic.cols[k];
+    g.fillRect(PXs[k]-sz/2,PYs[k]-sz/2,sz,sz);
+  }
+}
+const GENERIC=[['Scope',mScope],['X-Y',mXY],['Bars',mBars],['Radial',mRadial],['Ribbons',mRibbons],['Particles',mParticles],['Tunnel',mTunnel],['Kaleidoscope',mKaleido],['Terrain',mTerrain],['Orbs',mOrbs],['Mirror',mMirror],['Blob',mBlob],['Area',mArea],['Lobes',mLobes],['Dots',mDots],['Spikes',mSpikes],['Contours',mContours],['Disc 3D',mDisc],['Starburst',mStar],['Ferrofluid',mFerro],['Picture 2D',mPic2D],['Picture 3D',mPic3D]];
 let MODES=GENERIC.slice();
 
 /* ---------- buffers and style pipelines ---------- */
@@ -1683,7 +1965,7 @@ function setMode(i){
   mode=(i+MODES.length)%MODES.length; lastSwitch=performance.now(); clearReq=true;
   fade(1);
   document.querySelectorAll('#modes button').forEach((b,k)=>b.setAttribute('aria-pressed',String(k===mode)));
-  lastSwitchBeat=beatCount; refreshFavs();
+  lastSwitchBeat=beatCount; refreshFavs(); modeUi();
 }
 let lastTick=0;
 function tick(t){
@@ -1979,6 +2261,33 @@ $('bClicks').onclick=e=>{
   try{ localStorage.setItem('prism-clicks',clicksOn?'1':'0'); }catch(err){}
 };
 
+/* ---------- options that belong to particular display modes ---------- */
+function modeUi(){
+  const nm=MODES[mode]?MODES[mode][0]:'', tr=nm==='Scope'||nm==='X-Y', pc=nm.indexOf('Picture')===0;
+  $('optGrp').hidden=!(tr||pc); $('bSmooth').hidden=!tr; $('bPic').hidden=!pc;
+  let own=false; try{ own=!!localStorage.getItem('prism-pic'); }catch(e){}
+  $('bPicReset').hidden=!(pc&&(own||picOwn));
+  $('bSmooth').setAttribute('aria-pressed',String(smoothTrace));
+}
+let picOwn=false;
+$('bSmooth').onclick=()=>{ smoothTrace=!smoothTrace; try{ localStorage.setItem('prism-smooth',smoothTrace?'1':'0'); }catch(e){} modeUi(); };
+function loadPicture(url,keep){
+  const im=new Image();
+  im.onload=()=>{
+    try{
+      setPicture(im,im.naturalWidth||im.width,im.naturalHeight||im.height); picOwn=true; say('');
+      if(keep){ try{ const k=document.createElement('canvas'); k.width=k.height=320; k.getContext('2d').drawImage(pic.c,0,0,320,320); localStorage.setItem('prism-pic',k.toDataURL('image/jpeg',0.82)); }catch(e){} }
+    }catch(e){ say('That picture could not be used.'); }
+    if(keep) URL.revokeObjectURL(url); modeUi();
+  };
+  im.onerror=()=>{ if(keep){ URL.revokeObjectURL(url); say('That picture could not be opened. JPEG and PNG pictures work best.'); } };
+  im.src=url;
+}
+$('bPic').onclick=()=>$('picFile').click();
+$('picFile').onchange=e=>{ const f=e.target.files[0]; e.target.value=''; if(f) loadPicture(URL.createObjectURL(f),true); };
+$('bPicReset').onclick=()=>{ pic=null; picOwn=false; try{ localStorage.removeItem('prism-pic'); }catch(e){} modeUi(); };
+try{ const sp=localStorage.getItem('prism-pic'); if(sp) loadPicture(sp,false); }catch(e){}
+
 /* ---------- collapsible menu ---------- */
 let folds={};
 try{ const fo=JSON.parse(localStorage.getItem('prism-folds')||'{}'); if(fo&&typeof fo==='object') folds=fo; }catch(e){}
@@ -2024,6 +2333,9 @@ const HELP={
   bLock:'Freezes the current look and hides the controls. Taps are ignored until you hold the screen for two seconds.',
   bRec:'Records up to 15 seconds of the visuals as a video you can save or share.',
   bRecDel:'Throws away the clip you just recorded.',
+  bSmooth:'Switches the Scope and X-Y traces between the raw, jagged signal and a soft, flowing line.',
+  bPic:'Lets you choose a picture from this device. The Picture modes then bend and reshape it in time with the music.',
+  bPicReset:'Goes back to the built-in picture.',
   bClicks:'Turns the clicking sounds of the keys and sliders on or off.'
 };
 let tipTimer=null, tipFor=null, tipShown=null;
