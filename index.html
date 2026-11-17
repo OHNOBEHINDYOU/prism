@@ -210,6 +210,7 @@ body.quiet #screen{margin:0!important;border-radius:0!important;box-shadow:none!
   <div class="grp">
     <span class="lbl">Display mode</span>
     <div class="keys scroll" id="modes"></div>
+    <div class="keys"><button id="bCombine" type="button" aria-pressed="false">Combine</button></div>
   </div>
   <div class="grp" id="optGrp" hidden>
     <span class="lbl">Mode options</span>
@@ -335,6 +336,7 @@ let ac=null, an=null, outGain=null, srcNode=null, stream=null, elSrc=null, sr=44
 let freq=new Uint8Array(FFT/2), wave=new Uint8Array(FFT).fill(128);
 let live=false, kind='idle', gain=1;
 let micGain=null, micSens=1, micAuto=true;
+let anF=null, anB=null; const freqF=new Uint8Array(FFT/2), waveB=[0,1,2].map(()=>new Uint8Array(FFT).fill(128)), pkB=[0.05,0.05,0.05];
 let inp=null, anL=null, anR=null, rmsL=0, rmsR=0, stereo=false, stAmt=0, frameNo=0, liveSince=0;
 const waveL=new Uint8Array(1024).fill(128), waveR=new Uint8Array(1024).fill(128);
 const audio=new Audio(); audio.preload='auto';
@@ -370,14 +372,19 @@ function mark(){
   liveSince=performance.now();
   spin();
 }
-function spin(){ document.body.classList.toggle('live',live&&!(kind==='file'&&trackPaused())); }
+function spin(){ wake(); }
 function ensureCtx(){
   if(!ac){
     const AC=window.AudioContext||window.webkitAudioContext;
     ac=new AC(); sr=ac.sampleRate;
-    an=ac.createAnalyser(); an.fftSize=FFT; an.smoothingTimeConstant=0.78;
+    an=ac.createAnalyser(); an.fftSize=FFT; an.smoothingTimeConstant=0.6; an.minDecibels=-95; an.maxDecibels=-8;
     outGain=ac.createGain(); an.connect(outGain); outGain.connect(ac.destination);
     inp=ac.createGain(); inp.channelCount=2; inp.channelCountMode='explicit'; inp.connect(an);
+    try{
+      anF=ac.createAnalyser(); anF.fftSize=FFT; anF.smoothingTimeConstant=0; anF.minDecibels=-95; anF.maxDecibels=-8; inp.connect(anF);
+      const chain=(specs)=>{ let node=inp; for(const [type,hz] of specs){ const f=ac.createBiquadFilter(); f.type=type; f.frequency.value=hz; f.Q.value=0.707; node.connect(f); node=f; } const a=ac.createAnalyser(); a.fftSize=FFT; node.connect(a); return a; };
+      anB=[chain([['lowpass',170],['lowpass',170]]),chain([['highpass',260],['lowpass',2600]]),chain([['highpass',4000],['highpass',4000]])];
+    }catch(e){ anF=null; anB=null; }
     try{
       const sp2=ac.createChannelSplitter(2); inp.connect(sp2);
       anL=ac.createAnalyser(); anR=ac.createAnalyser(); anL.fftSize=anR.fftSize=1024;
@@ -656,15 +663,14 @@ function decPause(){
 async function decodeFallback(){
   const item=playlist[trackIdx];
   const fail=()=>say('That file could not be played. MP3, M4A, AAC, WAV and FLAC files work; protected Apple Music or Spotify downloads do not.');
-  if(!item||item.tried) return fail();
-  item.tried=true;
+  if(!item||item.bad) return fail();
   try{
     audio.pause();
     const ab=await item.file.arrayBuffer();
     const buf=await new Promise((res,rej)=>{ const pr=ac.decodeAudioData(ab,res,rej); if(pr&&pr.catch) pr.catch(rej); });
     if(kind!=='file'||playlist[trackIdx]!==item) return;
     dec={buf:buf,src:null,offset:0,startedAt:0,playing:false}; if($('msg').textContent.indexOf('That file')===0) say(''); decPlay();
-  }catch(e){ if(kind==='file'&&playlist[trackIdx]===item) fail(); }
+  }catch(e){ item.bad=true; if(kind==='file'&&playlist[trackIdx]===item) fail(); }
 }
 const trackTime=()=>dec?dec.offset+(dec.playing?ac.currentTime-dec.startedAt:0):audio.currentTime;
 const trackDur=()=>dec?dec.buf.duration:audio.duration;
@@ -833,61 +839,147 @@ function stopDemo(){
 try{ const dv0=parseInt(localStorage.getItem('prism-demo'),10); if(dv0>=0&&dv0<BEATS.length) demoIdx=dv0; }catch(e){}
 
 /* ---------- analysis ---------- */
-let bass=0, mid=0, treb=0, level=0, beat=0, bassAvg=0, beatCount=0, lastBeat=0;
-let userGain=1, pk=0.3, silentSince=0;
+let bass=0, mid=0, treb=0, level=0, beat=0, beatCount=0, lastBeat=0;
+let kick=0, snare=0, hat=0, kickOn=false, snareOn=false, hatOn=false;      /* the three layers' hits: a fading level and a one-frame flag each */
+let userGain=1, pk=0.3, silentSince=0, act=0, sounding=false, noiseFloor=0.2, lastAn=0, dirty=performance.now()+700, bandsLive=false;
 const clamp=v=>v<0?0:v>1?1:v;
-function avg(a,b){ let s=0; for(let i=a;i<b;i++) s+=freq[i]; return s/Math.max(1,b-a)/255; }
-function analyse(t){
-  if(live&&an){ an.getByteFrequencyData(freq); an.getByteTimeDomainData(wave); }
-  else{
-    for(let i=0;i<freq.length;i++){
-      const a=0.5*Math.exp(-i/160)*(0.6+0.4*Math.sin(t*0.002+i*0.05));
-      const b=0.3*Math.pow(Math.sin(t*0.0011+i*0.035),2)*Math.exp(-i/420);
-      freq[i]=255*clamp(a+b);
-    }
-    for(let i=0;i<wave.length;i++)
-      wave[i]=128+34*Math.sin(i*0.012+t*0.003)*Math.sin(t*0.0007)+12*Math.sin(i*0.05-t*0.004);
+function wake(n){ dirty=Math.max(dirty,performance.now()+(n||30)*17); }
+window.__prismDbg=()=>({beats:beatCount,bass:bass,mid:mid,treb:treb,level:level,kick:kick,snare:snare,hat:hat,act:act,sounding:sounding,bpm:bpm,gain:gain,raw:DET.raw,top:DET.top,floor:noiseFloor,bandsLive:bandsLive});
+/*DETECT-START*/
+/* Listens for hits in three layers of the sound - low (kick, bass), middle (snare, voice, guitar) and high (hats, cymbals) -
+   and measures how full each layer is. A hit is a sudden rise in a layer compared with how that layer has been behaving over
+   the last second and a half, so it keeps working whether the song is loud, quiet, dense or sparse. Each layer's fullness is
+   scaled to that layer's own recent range, so a quiet layer still moves through its whole range. */
+const DET={prev:null,hist:[0,1,2,3].map(()=>new Float32Array(90)),hn:0,last:[-1e9,-1e9,-1e9,-1e9],lastBeat:-1e9,lo:[0,0,0],hi:[0.3,0.3,0.3],pk:[60,60,60],mx:[0,0,0,0],on:[0,0,0,0],lv:[0,0,0],raw:0,top:0,beat:0};
+function detect(F,t,sr,sens){
+  const n=F.length, nyq=sr/2, bin=hz=>Math.max(1,Math.min(n-1,Math.round(hz/nyq*n)));
+  const E=[bin(32),bin(150),bin(2500),bin(12000)], L=[bin(30),bin(200),bin(2500),bin(12000)], D=DET;
+  if(!D.prev||D.prev.length!==n){ D.prev=new Uint8Array(n); D.prev.set(F); }
+  const fl=[0,0,0,0]; let tot=0;
+  for(let b=0;b<3;b++){
+    /* only rises that end up near the top of what this layer has been doing count, so hiss and faint sounds are ignored */
+    let s=0, top=0; const base=D.pk[b]-75;
+    for(let k=E[b];k<E[b+1];k++){ const v=F[k], d=v-D.prev[k]; if(v>top) top=v; if(d>0&&v>base) s+=d*Math.min(1,(v-base)/50); }
+    fl[b]=s/((E[b+1]-E[b])*255); D.pk[b]=top>D.pk[b]?top:D.pk[b]-(D.pk[b]-top)*0.002;
   }
-  if(live&&anL){ anL.getByteTimeDomainData(waveL); anR.getByteTimeDomainData(waveR); }
-  else if(live){ for(let i=0;i<1024;i++) waveL[i]=waveR[i]=wave[i]; }
-  else for(let i=0;i<1024;i++){ waveL[i]=wave[i]; waveR[i]=128+34*Math.sin(i*0.018+t*0.0021)*Math.sin(t*0.0007+1)+10*Math.sin(i*0.04+t*0.003); }
-  let sl=0, sq=0, sd=0;
+  fl[3]=fl[0]*0.45+fl[1]*0.35+fl[2]*0.2;
+  let top=0;
+  for(let b=0;b<3;b++){ let s=0; for(let k=L[b];k<L[b+1];k++){ s+=F[k]; if(F[k]>top) top=F[k]; } const v=s/((L[b+1]-L[b])*255); D.lv[b]=v; tot+=v; }
+  D.raw=tot/3; D.top=top/255;        /* top: the strongest single pitch, which is what tells sound from silence even for one clear note */ D.prev.set(F);
+  const REL=0.25, N=Math.min(D.hn,90), K=[1.5,1.7,1.7,1.6], GAP=[170,130,85,230], FLOOR=[0.014,0.01,0.01,0.012];
+  D.beat=0;
+  for(let b=0;b<4;b++){
+    let m=0, q=0; const H=D.hist[b];
+    for(let i=0;i<N;i++){ m+=H[i]; q+=H[i]*H[i]; }
+    m=N?m/N:0; const sd=N?Math.sqrt(Math.max(0,q/N-m*m)):0, thr=m+K[b]/sens*sd+FLOOR[b]/sens;
+    D.on[b]=0;
+    D.mx[b]=Math.max(fl[b],D.mx[b]*0.988);          /* a hit must also be a fair size next to the biggest recent ones */
+    if(N>12&&fl[b]>thr&&fl[b]>D.mx[b]*REL&&t-D.last[b]>GAP[b]&&D.top>0.22){ D.on[b]=Math.min(1,0.4+0.6*(fl[b]-thr)/(2.5*sd+0.02)); D.last[b]=t; }
+    H[D.hn%90]=fl[b];
+  }
+  D.hn++;
+  /* the main beat follows the kick; where there are no low hits it falls back to the middle layer or the whole sound */
+  if(t-D.lastBeat>200){
+    if(D.on[0]){ D.beat=D.on[0]; D.lastBeat=t; }
+    else if(t-D.last[0]>1500){
+      const o=Math.max(D.on[3],D.on[1]);
+      if(o){ D.beat=o; D.lastBeat=t; }
+      else if(D.on[2]&&t-D.last[1]>1500&&t-D.lastBeat>330){ D.beat=D.on[2]*0.8; D.lastBeat=t; }     /* a passage with only light percussion follows that instead */
+    }
+  }
+  /* each layer scaled to its own recent quietest and loudest */
+  for(let b=0;b<3;b++){
+    const v=D.lv[b];
+    D.hi[b]+=(v-D.hi[b])*(v>D.hi[b]?0.5:0.0012); D.lo[b]+=(v-D.lo[b])*(v<D.lo[b]?0.2:0.0012);
+    const lo=Math.max(D.lo[b],D.hi[b]-0.45), r=Math.max(0.1,D.hi[b]-lo), x=(v-lo)/r;
+    D.lv[b]=D.top<0.2?0:Math.pow(x<0?0:x>1?1:x,1.4);
+  }
+  return D;
+}
+/*DETECT-END*/
+/* the still picture shown before any sound source is chosen */
+function pose(){
+  const t=12345;
+  for(let i=0;i<freq.length;i++){
+    const a=0.5*Math.exp(-i/160)*(0.6+0.4*Math.sin(t*0.002+i*0.05)), b=0.3*Math.pow(Math.sin(t*0.0011+i*0.035),2)*Math.exp(-i/420);
+    freq[i]=255*clamp(a+b);
+  }
+  for(let i=0;i<wave.length;i++){
+    wave[i]=128+34*Math.sin(i*0.012+t*0.003)*Math.sin(t*0.0007)+12*Math.sin(i*0.05-t*0.004);
+    waveB[0][i]=128+70*Math.sin(i*0.006+1); waveB[1][i]=128+55*Math.sin(i*0.021)*Math.sin(i*0.0031+0.6); waveB[2][i]=128+40*Math.sin(i*0.11)*Math.sin(i*0.004+2);
+  }
+  for(let i=0;i<1024;i++){ waveL[i]=wave[i]; waveR[i]=128+34*Math.sin(i*0.018+t*0.0021)*Math.sin(t*0.0007+1)+10*Math.sin(i*0.04+t*0.003); }
+  pkB[0]=pkB[1]=pkB[2]=0.55;
+}
+function analyse(t){
+  const dt=Math.min(100,Math.max(1,t-lastAn)), k=dt/16.7; lastAn=t;
+  kickOn=snareOn=hatOn=false;
+  if(live&&an){
+    an.getByteFrequencyData(freq); an.getByteTimeDomainData(wave);
+    if(anF) anF.getByteFrequencyData(freqF); else freqF.set(freq);
+    bandsLive=!!anB;
+    if(anB) for(let b=0;b<3;b++){
+      anB[b].getByteTimeDomainData(waveB[b]);
+      let m=0; const w=waveB[b]; for(let i=0;i<w.length;i+=4){ const v=w[i]>128?w[i]-128:128-w[i]; if(v>m) m=v; }
+      m/=128; pkB[b]=m>pkB[b]?m:Math.max(0.012,pkB[b]*Math.pow(0.9975,k));       /* each layer's own loudest recent swing */
+    }
+    if(anL){ anL.getByteTimeDomainData(waveL); anR.getByteTimeDomainData(waveR); } else for(let i=0;i<1024;i++) waveL[i]=waveR[i]=wave[i];
+  }else{ pose(); bandsLive=true; }
+  let sl=0, sq=0, sd=0, wm=0;
   for(let i=0;i<1024;i+=2){ const a=waveL[i]-128, b=waveR[i]-128; sl+=a*a; sq+=b*b; sd+=Math.abs(a-b); }
   rmsL=Math.sqrt(sl/512)/128; rmsR=Math.sqrt(sq/512)/128;
   stAmt+=((sd/512>1?1:0)-stAmt)*0.06; stereo=stAmt>0.5; frameNo++;
-  const n=freq.length, nyq=sr/2;
-  /* microphone input is quiet and varies a lot, so level it automatically */
-  let mx=0; for(let i=2;i<n;i+=2) if(freq[i]>mx) mx=freq[i];
-  mx/=255; pk=Math.max(mx,pk*0.9985);
-  gain=userGain*(kind==='mic'&&micAuto?Math.min(6,Math.max(1,0.85/Math.max(pk,0.14))):1);
-  if(kind==='mic'&&mx<0.03){ if(!silentSince) silentSince=t; } else silentSince=0;
-  const b1=Math.max(3,Math.round(250/nyq*n)), b2=Math.round(2500/nyq*n), b3=Math.min(n,Math.round(12000/nyq*n));
-  const b=avg(1,b1);
-  bass+=(clamp(b*gain)-bass)*0.5;
-  mid+=(clamp(avg(b1,b2)*1.4*gain)-mid)*0.4;
-  treb+=(clamp(avg(b2,b3)*2*gain)-treb)*0.4;
-  level=clamp(bass*0.5+mid*0.35+treb*0.15);
-  bassAvg+=(b-bassAvg)*0.03;
-  beat*=0.9;
-  if(live && b>bassAvg*(1+0.22/beatSens)+0.03/beatSens && b*gain>0.22/beatSens && t-lastBeat>230){
-    beat=1; lastBeat=t; beatCount++;
-    beatTimes.push(t); if(beatTimes.length>16) beatTimes.shift();
-    bpm=estBpm();
-    if(beatCount%8===0) sideIdx=(sideIdx+1)%SIDES.length;
+  if(!live){                                   /* nothing chosen yet: hold a still preview */
+    bass=0.45; mid=0.35; treb=0.25; level=0.4; beat=kick=snare=hat=0; gain=userGain; sounding=false; act=0; silentSince=0; return;
+  }
+  /* the trace is scaled to the loudest recent swing, so quiet and loud sources both fill the screen */
+  for(let i=0;i<wave.length;i+=4){ const v=wave[i]>128?wave[i]-128:128-wave[i]; if(v>wm) wm=v; }
+  wm/=128; pk=wm>pk?wm:Math.max(0.05,pk*Math.pow(0.9985,k));
+  gain=userGain*(kind==='mic'&&!micAuto?1:Math.min(7,Math.max(0.7,0.62/pk)));
+  const D=detect(freqF,t,sr,beatSens);
+  /* is there really sound? A microphone always hears some room noise, so for it the sound must stand clear of the quietest level heard */
+  noiseFloor+=(D.top-noiseFloor)*(D.top<noiseFloor?0.05:0.0001)*k; if(noiseFloor>0.5) noiseFloor=0.5;
+  sounding=D.top>0.22&&(kind!=='mic'||D.top>noiseFloor+0.07);
+  act+=((sounding?1:0)-act)*(sounding?0.3:0.045)*k; if(act<0.004) act=0;
+  if(kind==='mic'&&!sounding){ if(!silentSince) silentSince=t; } else silentSince=0;
+  const lv=sounding?D.lv:[0,0,0], ease=(cur,to)=>cur+(to-cur)*Math.min(1,(to>cur?0.7:0.2)*k);    /* quick to rise, a little slower to fall */
+  bass=ease(bass,clamp(lv[0]*userGain)); mid=ease(mid,clamp(lv[1]*userGain)); treb=ease(treb,clamp(lv[2]*userGain));
+  level=clamp(bass*0.45+mid*0.35+treb*0.2);
+  const fall=Math.pow(0.88,k);
+  beat*=fall; kick*=fall; snare*=Math.pow(0.85,k); hat*=Math.pow(0.78,k);
+  if(window.__prismForce){ bass=mid=treb=level=1; kick=snare=hat=beat=1; sounding=true; act=1; gain=Math.max(gain,userGain*4); for(let b=0;b<3;b++) pkB[b]=Math.min(pkB[b],0.05); }
+  if(sounding&&t-lastBeat>2500&&t-lastPseudo>900){ pseudoBeats++; lastPseudo=t; }      /* music with no clear hits still moves things along slowly */
+  if(sounding){
+    if(D.on[0]){ kick=Math.max(kick,D.on[0]); kickOn=true; }
+    if(D.on[1]){ snare=Math.max(snare,D.on[1]); snareOn=true; }
+    if(D.on[2]){ hat=Math.max(hat,D.on[2]); hatOn=true; }
+    if(D.beat){
+      beat=0.6+0.4*D.beat; lastBeat=t; beatCount++;
+      beatTimes.push(t); if(beatTimes.length>16) beatTimes.shift();
+      bpm=estBpm();
+      if(beatCount%8===0) sideIdx=(sideIdx+1)%SIDES.length;
+    }
   }
 }
-const bandBuf={}, bandAvg={};
+const bandBuf={}, bandAvg={}, bandLo={}, bandHi={}, bandAt={};
 function bands(n){
   const out=bandBuf[n]||(bandBuf[n]=new Float32Array(n)), av=bandAvg[n]||(bandAvg[n]=new Float32Array(n));
+  const lo_=bandLo[n]||(bandLo[n]=new Float32Array(n)), hi_=bandHi[n]||(bandHi[n]=new Float32Array(n).fill(0.3));
+  if(bandAt[n]===frameNo) return out;          /* already worked out this frame */
+  if(window.__prismForce){ bandAt[n]=frameNo; return out.fill(1); }
+  bandAt[n]=frameNo;
   const nyq=sr/2, bins=freq.length, lo=Math.log(35), hi=Math.log(Math.min(15000,nyq));
   for(let i=0;i<n;i++){
     const f0=Math.exp(lo+(hi-lo)*i/n), f1=Math.exp(lo+(hi-lo)*(i+1)/n);
     const a=Math.floor(f0/nyq*bins), b=Math.max(a+1,Math.ceil(f1/nyq*bins));
-    let s=0; for(let k=a;k<b&&k<bins;k++) if(freq[k]>s) s=freq[k];
+    let s=0; for(let q=a;q<b&&q<bins;q++) if(freq[q]>s) s=freq[q];
+    const v=s/255;
+    if(!live){ out[i]=clamp(0.62*Math.pow(clamp(v*(0.65+0.75*i/n)),1.6)); continue; }
+    hi_[i]+=(v-hi_[i])*(v>hi_[i]?0.5:0.0015); lo_[i]+=(v-lo_[i])*(v<lo_[i]?0.2:0.0015);
+    const base=Math.max(lo_[i],hi_[i]-0.4), x=clamp((v-base)/Math.max(0.1,hi_[i]-base));
     /* steady sound is held back and sudden rises are pushed up, so hits stand out from the bed */
-    const v=clamp(s/255*(0.65+0.75*i/n)*gain);
-    av[i]+=(v-av[i])*0.05;
-    out[i]=clamp(0.62*Math.pow(v,1.6)+1.9*Math.max(0,v-av[i]));
+    av[i]+=(x-av[i])*0.06;
+    out[i]=sounding?clamp((0.62*Math.pow(x,1.7)+1.2*Math.max(0,x-av[i]))*userGain):out[i]*0.8;
   }
   return out;
 }
@@ -946,7 +1038,8 @@ function colRGB(t){
 }
 const FR=CanvasRenderingContext2D.prototype.fillRect, FILL=CanvasRenderingContext2D.prototype.fill;
 let BGC='3,10,6', BGH='rgb(3,10,6)', MONO=false, WIRE=false, barsN=0;
-function fade(a){ g.globalCompositeOperation='source-over'; g.fillStyle='rgba('+BGC+','+a+')'; FR.call(g,0,0,W,H); }
+let skipFade=false, combine=false; const extra=[];      /* extra: the other display modes drawn underneath the chosen one */
+function fade(a){ if(skipFade) return; g.globalCompositeOperation='source-over'; g.fillStyle='rgba('+BGC+','+a+')'; FR.call(g,0,0,W,H); }
 function poly(x,y,r,sides,rot){
   g.beginPath();
   for(let k=0;k<sides;k++){ const a=rot+k/sides*TAU; const px=x+Math.cos(a)*r, py=y+Math.sin(a)*r; k?g.lineTo(px,py):g.moveTo(px,py); }
@@ -969,7 +1062,7 @@ function mBars(){
 }
 function mRadial(t){
   fade(0.24);
-  const n=96, b=bands(n), m=Math.min(W,H), R=m*(0.16+bass*0.05+beat*0.02), L=m*0.3, cx=W/2, cy=H/2, rot=t*0.00015-Math.PI/2;
+  const n=96, b=bands(n), m=Math.min(W,H), R=m*(0.16+bass*0.05+beat*0.02), L=m*0.235, cx=W/2, cy=H/2, rot=t*0.00015-Math.PI/2;
   g.lineCap='round'; g.lineWidth=Math.max(1.5*U,TAU*R/(n*2)*0.55);
   for(let k=0;k<n*2;k++){
     const i=k<n?k:2*n-1-k, a=rot+(k+0.5)/(2*n)*TAU, len=b[i]*L+2*U, c=Math.cos(a), s=Math.sin(a);
@@ -980,7 +1073,7 @@ function mRadial(t){
   const step=Math.floor(wave.length/180);
   g.beginPath();
   for(let k=0;k<=180;k++){
-    const v=(wave[(k%180)*step]-128)/128, r=R*0.8+v*R*0.4*gain, a=k/180*TAU;
+    const v=Math.tanh((wave[(k%180)*step]-128)/128*gain), r=R*0.8+v*R*0.4, a=k/180*TAU;
     const x=cx+Math.cos(a)*r, y=cy+Math.sin(a)*r; k?g.lineTo(x,y):g.moveTo(x,y);
   }
   g.closePath(); g.strokeStyle=col(0.5+bass*0.3,0.95); g.lineWidth=2*U; g.stroke();
@@ -988,15 +1081,19 @@ function mRadial(t){
 function mRibbons(t){
   fade(0.2);
   g.globalCompositeOperation='lighter';
-  const N=220, step=Math.floor(wave.length/N);
+  const N=220, LAY=[0,1,2,1,0], lv=live?[bass,mid,treb]:[0.6,0.6,0.6], hit=[kick,snare,hat], on=live?act:1;
   for(let L=0;L<5;L++){
-    const amp=H*(0.14+L*0.07)*gain, y0=H/2+Math.sin(t*0.0006+L*1.3)*H*0.04, flip=L%2?-1:1;
+    /* outer ribbons follow the bass, the next pair the voices and melody, the centre one the highs */
+    const bi=LAY[L], w=bandsLive?waveB[bi]:wave, span=bandsLive?[1400,800,360][bi]:wave.length, step=span/N;
+    const amp=bandsLive?H*(0.09+0.05*(2-Math.abs(L-2)))*(0.25+0.75*lv[bi]+0.3*hit[bi])/Math.max(pkB[bi],0.012)*on*Math.min(2,userGain):H*(0.14+L*0.07)*gain;
+    const y0=H*(0.5+(L-2)*0.11)+Math.sin(t*0.0006+L*1.3)*H*0.02, flip=L>2?-1:1, lim=H*0.2;
     g.beginPath();
     for(let i=0;i<=N;i++){
-      const v=(wave[Math.min(wave.length-1,i*step)]-128)/128, env=Math.sin(i/N*Math.PI);
-      const x=i/N*W, y=y0+v*amp*env*flip; i?g.lineTo(x,y):g.moveTo(x,y);
+      const v=(w[Math.min(w.length-1,Math.floor(i*step))]-128)/128, env=Math.sin(i/N*Math.PI);
+      let d=v*amp*env*flip; if(d>lim) d=lim; else if(d<-lim) d=-lim;
+      const x=i/N*W, y=y0+d; i?g.lineTo(x,y):g.moveTo(x,y);
     }
-    g.strokeStyle=col(L/5+level*0.3,0.85); g.lineWidth=(3.2-L*0.45)*U; g.stroke();
+    g.strokeStyle=col(bi*0.3+L*0.04,0.9); g.lineWidth=(bi===0?3.4:bi===1?2.4:1.6)*U; g.stroke();
   }
   g.globalCompositeOperation='source-over';
 }
@@ -1127,24 +1224,31 @@ try{ smoothTrace=localStorage.getItem('prism-smooth')==='1'; }catch(e){}
 
 function mScope(){
   fade(0.34);
-  const n=wave.length>>1; let s=0;
-  for(let i=1;i<n;i++){ if(wave[i-1]<128&&wave[i]>=128){ s=i; break; } }
-  g.beginPath();
-  if(smoothTrace){
-    /* average neighbouring samples and join them with curves for a soft, flowing line */
-    const P=110, st=n/P;
-    for(let i=0;i<P;i++){ const a=Math.floor(i*st); let v=0, c=0; for(let k=a;k<a+st+4&&k<n;k++){ v+=wave[s+k]; c++; } SX[i]=i/(P-1)*W; SY[i]=H/2-(v/c-128)/128*H*0.42*gain; }
-    smoothLine(P);
-  }else{
-    for(let i=0;i<n;i++){ const x=i/(n-1)*W, y=H/2-(wave[s+i]-128)/128*H*0.42*gain; i?g.lineTo(x,y):g.moveTo(x,y); }
-  }
-  g.lineJoin='round'; g.lineCap='round'; g.shadowColor=col(0,1); g.shadowBlur=14*U;
-  g.strokeStyle=col(0,1); g.lineWidth=2.2*U; g.stroke(); g.shadowBlur=0; g.lineCap='butt';
+  const trace=(w,n,cy,amp,lim,c,lw)=>{
+    let st=0; for(let i=1;i<w.length-n;i++){ if(w[i-1]<128&&w[i]>=128){ st=i; break; } }
+    const y=v=>{ const d=(v-128)/128*amp; return cy-(d>lim?lim:d<-lim?-lim:d); };
+    g.beginPath();
+    if(smoothTrace){
+      /* average neighbouring samples and join them with curves for a soft, flowing line */
+      const P=110, sp=n/P;
+      for(let i=0;i<P;i++){ const a=Math.floor(i*sp); let v=0, q=0; for(let k=a;k<a+sp+4&&k<n;k++){ v+=w[st+k]; q++; } SX[i]=i/(P-1)*W; SY[i]=y(v/q); }
+      smoothLine(P);
+    }else{
+      for(let i=0;i<n;i++){ const x=i/(n-1)*W; i?g.lineTo(x,y(w[st+i])):g.moveTo(x,y(w[st+i])); }
+    }
+    g.lineJoin='round'; g.lineCap='round'; g.shadowColor=col(c,1); g.shadowBlur=14*U;
+    g.strokeStyle=col(c,1); g.lineWidth=lw*U; g.stroke(); g.shadowBlur=0; g.lineCap='butt';
+  };
+  if(bandsLive){
+    /* the sound split into its layers: highs on top, voices and melody in the middle, bass underneath */
+    const lv=live?[bass,mid,treb]:[0.6,0.6,0.6], on=live?act:1, N=[1024,640,300];
+    for(let b=2;b>=0;b--) trace(waveB[b],N[b],H*(0.78-b*0.28),H*0.2*(0.3+0.7*lv[b])/Math.max(pkB[b],0.012)*on*Math.min(2,userGain),H*0.135,b*0.33,b?2:2.6);
+  }else trace(wave,wave.length>>1,H/2,H*0.42*gain,H*0.48,0,2.2);
 }
 function mXY(){
   fade(0.22);
-  const m=Math.min(W,H)*0.44*gain, d=24;
-  const px=i=>stereo?(waveL[i]-128)/128:(wave[i]-128)/128, py=i=>stereo?(waveR[i]-128)/128:(wave[i+d]-128)/128;
+  const m=Math.min(W,H)*0.46, d=24, lim=v=>Math.tanh((v-128)/128*gain);      /* loud passages curve in towards the edge instead of leaving the screen */
+  const px=i=>lim(stereo?waveL[i]:wave[i]), py=i=>lim(stereo?waveR[i]:wave[i+d]);
   g.beginPath();
   if(smoothTrace){
     const P=200, st=5;
@@ -1249,11 +1353,12 @@ function mContours(t){
   const b=bands(8), m=Math.min(W,H), K=9, n=96;
   g.lineWidth=1.6*U; g.lineJoin='round';
   for(let k=1;k<=K;k++){
-    const r0=m*0.045*k*(1+bass*0.25+beat*0.05);
+    const r0=m*0.04*k*(1+bass*0.2+beat*0.05), rmax=m*0.47;
     g.beginPath();
     for(let i=0;i<=n;i++){
       const a=i/n*TAU; let r=r0;
       for(let h=0;h<5;h++) r+=r0*0.12*(k/K+0.3)*b[h+1]*Math.sin(a*(h+3)+t*0.0007*(h%2?1:-1)+k*0.25);
+      if(r>rmax) r=rmax;
       const x=W/2+Math.cos(a)*r, y=H/2+Math.sin(a)*r; i?g.lineTo(x,y):g.moveTo(x,y);
     }
     g.closePath(); g.strokeStyle=col(0.1+k/K*0.5,0.95); g.stroke();
@@ -1265,7 +1370,7 @@ function mDisc(t){
   fade(0.7);
   const S=96, NB=22, b=bands(NB);
   if(++discTick%2===0){ discHist[discHead]=Float32Array.from(b); discHead=(discHead+1)%S; }
-  const cx=W/2, cy=H*0.56, m=Math.min(W*0.98,H*1.5), R1=m*0.49, R0=R1*0.17, tilt=0.42, hgt=Math.min(H*0.3,m*0.3), rot=t*0.00012;
+  const cx=W/2, cy=H*0.58, m=Math.min(W*0.96,H*1.3), R1=m*0.49, R0=R1*0.17, tilt=0.42, hgt=Math.max(0,Math.min(H*0.3,m*0.3,cy-tilt*R1-H*0.04)), rot=t*0.00012;
   for(let s=0;s<S;s++) discOrder[s]=s;
   discOrder.length=S; discOrder.sort((p,q)=>Math.sin(rot+p/S*TAU)-Math.sin(rot+q/S*TAU));
   g.lineJoin='round'; g.lineWidth=Math.max(1,1.2*U);
@@ -1289,21 +1394,20 @@ function ferroStep(t){
   }
   const k=Math.max(0.3,Math.min(2.5,(t-ferroT)/16.7)); ferroT=t;
   /* two magnets: the main one wanders, the second swings out from it as the music gets louder, stretching the mass until it splits */
-  const ax=0.16*Math.sin(t*0.0005), ay=-0.04+0.14*Math.cos(t*0.00037), sw=t*0.0009, sd=0.08+0.5*Math.min(1,level*1.3)+0.12*beat;
+  const ax=0.16*Math.sin(t*0.0005), ay=-0.04+0.14*Math.cos(t*0.00037), sw=t*0.0009, sd=0.06+0.55*mid+0.12*kick;      /* voices and melody stretch the mass */
   const bx=ax+Math.cos(sw)*sd, by=ay+Math.sin(sw)*sd*0.8;
-  const pb=pbeat(t), hit=pb!==ferroBeat; ferroBeat=pb;
   for(let i=0;i<FB.length;i++){
     const p=FB[i];
     if(p.core){
       const mx=i<2?ax:bx, my=i<2?ay:by, dx=mx-p.x, dy=my-p.y, pull=0.004+0.008*bass;
       p.vx+=dx*pull*k; p.vy+=dy*pull*k;
-      if(hit){ const a=Math.random()*TAU, kick=0.012*(0.5+bass); p.vx+=Math.cos(a)*kick; p.vy+=Math.sin(a)*kick; }
+      if(kickOn){ const a=Math.random()*TAU, push=0.014*(0.4+kick); p.vx+=Math.cos(a)*push; p.vy+=Math.sin(a)*push; }       /* the kick jolts the main mass */
     }else{
       /* drops drift round their own resting places, are drawn into the mass by the bass and flung back out on the beat */
       const ha=p.ha+t*0.00012*(i%2?1:-1), hx=Math.cos(ha)*p.hr, hy=Math.sin(ha)*p.hr, dx=ax-p.x, dy=ay-p.y, d=Math.hypot(dx,dy)||1e-3, pull=0.007*bass*bass;
-      p.vx+=((hx-p.x)*0.0022+dx*pull-dy/d*0.0008*mid+(Math.random()-0.5)*0.0035*treb)*k;
-      p.vy+=((hy-p.y)*0.0022+dy*pull+dx/d*0.0008*mid+(Math.random()-0.5)*0.0035*treb)*k;
-      if(hit){ const a=Math.atan2(-dy,-dx)+(Math.random()-0.5)*1.8, kick=(0.015+Math.random()*0.03)*(0.4+bass); p.vx+=Math.cos(a)*kick; p.vy+=Math.sin(a)*kick; }
+      p.vx+=((hx-p.x)*0.0022+dx*pull-dy/d*0.0008*mid+(Math.random()-0.5)*(0.003*treb+0.006*hat))*k;      /* the highs make the drops shiver */
+      p.vy+=((hy-p.y)*0.0022+dy*pull+dx/d*0.0008*mid+(Math.random()-0.5)*(0.003*treb+0.006*hat))*k;
+      if(snareOn||(kickOn&&i%3===0)){ const a=Math.atan2(-dy,-dx)+(Math.random()-0.5)*1.8, push=(0.015+Math.random()*0.03)*(0.4+(snareOn?snare:kick)); p.vx+=Math.cos(a)*push; p.vy+=Math.sin(a)*push; }   /* the snare flings the drops outwards */
     }
   }
   for(let i=0;i<FB.length;i++) for(let j=i+1;j<FB.length;j++){   /* keep drops from collapsing into a single point */
@@ -1315,7 +1419,7 @@ function ferroStep(t){
     const p=FB[i]; p.vx*=damp; p.vy*=damp; p.x+=p.vx*k; p.y+=p.vy*k;
     const d=Math.hypot(p.x,p.y), lim=0.93-p.r;
     if(d>lim){ const nx=p.x/d, ny=p.y/d, vn=p.vx*nx+p.vy*ny; p.x=nx*lim; p.y=ny*lim; if(vn>0){ p.vx-=1.6*vn*nx; p.vy-=1.6*vn*ny; } }
-    const r=p.r*1.5*(1+(p.core?0.22*bass:0.12*treb)+0.05*beat);   /* reach of this drop's pull on the surface */
+    const r=p.r*1.5*(1+(p.core?0.2*bass+0.08*kick:0.1*treb+0.1*hat));   /* reach of this drop's pull on the surface */
     FBX[i]=p.x; FBY[i]=p.y; FBR[i]=r*r;
   }
 }
@@ -1536,7 +1640,9 @@ async function readGLB(buf){
     if(blob){ try{ img=await new Promise((ok,no)=>{ const u=URL.createObjectURL(blob), el=new Image(); el.onload=()=>{ URL.revokeObjectURL(u); ok(el); }; el.onerror=()=>{ URL.revokeObjectURL(u); no(); }; el.src=u; }); }catch(e){ img=null; } }
     out.push({P:P,N:N,U:join(G.U,Float32Array),I:join(G.I,Uint32Array),n:G.n,col:pbr.baseColorFactor||sg.diffuseFactor||[1,1,1,1],img:img,cut:mt.alphaMode==='MASK'||mt.alphaMode==='BLEND'});
   }
-  const ctr=[(lo[0]+hi[0])/2,(lo[1]+hi[1])/2,(lo[2]+hi[2])/2], k=1.7/(Math.max(hi[0]-lo[0],hi[1]-lo[1],hi[2]-lo[2])||1);
+  const ctr=[(lo[0]+hi[0])/2,(lo[1]+hi[1])/2,(lo[2]+hi[2])/2]; let far=1e-9;
+  for(const G of out) for(let q=0;q<G.P.length;q+=3){ const d=Math.hypot(G.P[q]-ctr[0],G.P[q+1]-ctr[1],G.P[q+2]-ctr[2]); if(d>far) far=d; }
+  const k=0.72/far;
   for(const G of out) for(let q=0;q<G.P.length;q+=3){ G.P[q]=(G.P[q]-ctr[0])*k; G.P[q+1]=(G.P[q+1]-ctr[1])*k; G.P[q+2]=(G.P[q+2]-ctr[2])*k; }
   return {groups:out,tris:tris};
 }
@@ -1571,19 +1677,19 @@ function mdlGL(){
     if(!two&&!gl.getExtension('OES_element_index_uint')) throw new Error('nogl');
     const sh=(type,src)=>{ const s=gl.createShader(type); gl.shaderSource(s,src); gl.compileShader(s); if(!gl.getShaderParameter(s,gl.COMPILE_STATUS)) throw new Error(gl.getShaderInfoLog(s)||'shader'); return s; };
     const vs=`attribute vec3 aP; attribute vec3 aN; attribute vec2 aU;
-uniform mat4 uMV; uniform mat4 uPr; uniform float uT; uniform float uBass; uniform float uBeat; uniform float uMid; uniform float uTreb; uniform vec4 uFx;
+uniform mat4 uMV; uniform mat4 uPr; uniform float uT; uniform float uBass; uniform float uBeat; uniform float uMid; uniform float uTreb; uniform float uSn; uniform float uHat; uniform vec4 uFx;
 varying vec3 vN; varying vec3 vP; varying vec2 vU;
 void main(){
   vec3 p=aP; vec3 n=aN; vec3 rd=normalize(aP+vec3(0.0001));
   float rip=sin(p.y*9.0-uT*4.0)*0.5+0.5;
-  p+=rd*uFx.x*(0.02+0.11*uBass*rip+0.05*uBeat);
-  float a=uFx.y*p.y*(2.2*sin(uT*0.9)*(0.3+uMid*1.4)+uBeat*0.6);
+  p+=rd*(0.55+0.45*uFx.x)*(0.14*uBass*rip+0.06*uBeat);
+  float a=(0.5+0.5*uFx.y)*p.y*1.9*sin(uT*0.9)*uMid;
   float c=cos(a); float s=sin(a); mat2 r=mat2(c,-s,s,c); p.xz=r*p.xz; n.xz=r*n.xz;
   float band=floor(p.y*7.0+uT*0.7); float h=fract(sin(band*91.7)*43758.5);
-  p.x+=uFx.z*(h-0.5)*(0.3*uBeat+0.2*uBass);
+  p.x+=(0.4+0.6*uFx.z)*(h-0.5)*0.36*uSn;
   float nz=fract(sin(dot(floor(aP*13.0),vec3(12.9,78.2,37.7)))*43758.5);
-  p+=rd*uFx.w*nz*(0.24*uBeat+0.14*uTreb+0.05*uBass);
-  p*=1.0+0.06*uBeat+0.05*uBass;
+  p+=rd*(0.4+0.6*uFx.w)*nz*(0.15*uTreb+0.2*uHat);
+  p*=1.0+0.07*uBeat;
   vec4 mv=uMV*vec4(p,1.0); vP=mv.xyz; vN=mat3(uMV[0].xyz,uMV[1].xyz,uMV[2].xyz)*n; vU=aU; gl_Position=uPr*mv;
 }`;
     const fs=`precision mediump float;
@@ -1603,7 +1709,7 @@ void main(){
     const pr=gl.createProgram(); gl.attachShader(pr,sh(gl.VERTEX_SHADER,vs)); gl.attachShader(pr,sh(gl.FRAGMENT_SHADER,fs));
     gl.bindAttribLocation(pr,0,'aP'); gl.bindAttribLocation(pr,1,'aN'); gl.bindAttribLocation(pr,2,'aU'); gl.linkProgram(pr);
     if(!gl.getProgramParameter(pr,gl.LINK_STATUS)) throw new Error('link');
-    const loc={}; ['uMV','uPr','uT','uBass','uBeat','uMid','uTreb','uFx','uTex','uCol','uHasTex','uMode','uCut','uRim','uPulse'].forEach(k=>loc[k]=gl.getUniformLocation(pr,k));
+    const loc={}; ['uMV','uPr','uT','uBass','uBeat','uMid','uTreb','uFx','uTex','uCol','uHasTex','uMode','uCut','uRim','uPulse','uSn','uHat'].forEach(k=>loc[k]=gl.getUniformLocation(pr,k));
     c.addEventListener('webglcontextlost',e=>{ e.preventDefault(); MDL.gpu=null; MDL.gl=null; },false);
     MDL.gl=gl; MDL.cv=c; MDL.prog=pr; MDL.loc=loc; MDL.two=two;
   }catch(e){ MDL.dead=true; MDL.gl=null; window.__prismModelGL=String(e&&e.message||e); }
@@ -1656,7 +1762,7 @@ function mModel(t){
   fade(0.55);
   const m=Math.min(W,H), cx=W/2, cy=H/2, target=(pbeat(t)>>3)%4;
   for(let k=0;k<4;k++) MDL.fx[k]+=((k===target?1:0)-MDL.fx[k])*0.06;     /* the way it bends changes every eight beats */
-  MDL.spin+=0.006+level*0.02+beat*0.03;
+  MDL.spin+=(0.004+level*0.02+kick*0.03)*(live?act:0);
   const rx=0.25+0.18*Math.sin(t*0.0003), gl=mdlGL();
   if(gl){
     if(!MDL.gpu) mdlUpload();
@@ -1664,7 +1770,7 @@ function mModel(t){
     gl.viewport(0,0,MDL.cv.width,MDL.cv.height); gl.clearColor(0,0,0,0); gl.clear(gl.COLOR_BUFFER_BIT|gl.DEPTH_BUFFER_BIT);
     gl.enable(gl.DEPTH_TEST); gl.disable(gl.CULL_FACE); gl.disable(gl.BLEND); gl.useProgram(MDL.prog);
     gl.uniformMatrix4fv(L.uMV,false,M4.view(MDL.spin,rx,3.5)); gl.uniformMatrix4fv(L.uPr,false,M4.persp(0.66,0.1,20));
-    gl.uniform1f(L.uT,(t*0.001)%1000); gl.uniform1f(L.uBass,Math.min(1.5,bass)); gl.uniform1f(L.uBeat,beat); gl.uniform1f(L.uPulse,beat); gl.uniform1f(L.uMid,Math.min(1.5,mid)); gl.uniform1f(L.uTreb,Math.min(1.5,treb));
+    gl.uniform1f(L.uT,(t*0.001)%1000); gl.uniform1f(L.uBass,Math.min(1.5,bass)); gl.uniform1f(L.uBeat,kick); gl.uniform1f(L.uPulse,beat); gl.uniform1f(L.uSn,snare); gl.uniform1f(L.uHat,hat); gl.uniform1f(L.uMid,Math.min(1.5,mid)); gl.uniform1f(L.uTreb,Math.min(1.5,treb));
     gl.uniform4fv(L.uFx,MDL.fx); gl.uniform1f(L.uMode,MONO?1:WIRE?2:0); gl.uniform3fv(L.uRim,rim); gl.uniform1i(L.uTex,0);
     for(const G of MDL.gpu||[]){
       gl.bindBuffer(gl.ARRAY_BUFFER,G.p); gl.enableVertexAttribArray(0); gl.vertexAttribPointer(0,3,gl.FLOAT,false,0,0);
@@ -1865,7 +1971,8 @@ function inkPass(src,ink,dx,dy,amp,tile,sc){
   G.globalCompositeOperation='multiply'; G.drawImage(T.c,0,0); G.globalCompositeOperation='source-over';
 }
 /* a beat counter that keeps ticking on a timer when no beats are being detected */
-const pbeat=t=>live&&t-lastBeat<2500?beatCount:Math.floor(t/900);
+let pseudoBeats=0, lastPseudo=0;
+const pbeat=t=>beatCount+pseudoBeats;
 let htTile=null, grainTile=null;
 function htMake(pat,amt){
   if(!htTile) htTile=document.createElement('canvas');
@@ -2263,7 +2370,7 @@ function mSolid(t){
     if(al<=0) continue;
     poly(cx,cy,r.r*m,6,solY); g.strokeStyle=col(r.h,al); g.lineWidth=(1+3*al)*U; g.stroke();
   }
-  const b=bands(12), s=m*(0.19+bass*0.09+beat*0.06);
+  const b=bands(12), s=m*(0.17+bass*0.06+beat*0.04);
   const ca=Math.cos(solX), sa=Math.sin(solX), cb=Math.cos(solY), sb=Math.sin(solY);
   const P=sol.v.map((v,i)=>{
     const k=1+b[i%12]*0.6, x=v[0]*k, y=v[1]*k, z=v[2]*k, y2=y*ca-z*sa, z2=y*sa+z*ca, x2=x*cb+z2*sb, z3=-x*sb+z2*cb, f=3/(3+z3);
@@ -2301,19 +2408,41 @@ let mode=0, auto=true, lastSwitch=0, palTurn=0;
 function setMode(i){
   mode=(i+MODES.length)%MODES.length; lastSwitch=performance.now(); clearReq=true;
   fade(1);
-  document.querySelectorAll('#modes button').forEach((b,k)=>b.setAttribute('aria-pressed',String(k===mode)));
+  /* layers that no longer make sense are dropped: the chosen mode itself, ones this screen style lacks, and any when the chosen mode fills the screen its own way */
+  const keep=extra.filter(n=>combine&&!MODES[mode][2]&&n!==MODES[mode][0]&&MODES.some(m=>m[0]===n&&!m[2])); extra.length=0; keep.slice(-2).forEach(n=>extra.push(n));
+  document.querySelectorAll('#modes button').forEach((b,k)=>b.setAttribute('aria-pressed',String(k===mode||extra.indexOf(MODES[k][0])>=0)));
   lastSwitchBeat=beatCount; refreshFavs(); modeUi();
+}
+/* choosing a display mode: normally it replaces the current one; with Combine on, up to three are layered */
+function pickMode(i){
+  if(!combine||MODES[i][2]||MODES[mode][2]){ extra.length=0; setMode(i); return; }
+  const nm=MODES[i][0], at=extra.indexOf(nm);
+  if(i===mode){ if(extra.length){ const top=extra.pop(); setMode(MODES.findIndex(m=>m[0]===top)); } return; }      /* pressing a lit key takes that layer away */
+  if(at>=0){ extra.splice(at,1); setMode(mode); return; }
+  extra.push(MODES[mode][0]); setMode(i);
+}
+function layered(t){
+  const fns=extra.map(n=>MODES.find(m=>m[0]===n)).filter(Boolean).map(m=>m[1]); fns.push(MODES[mode][1]);
+  for(let k=0;k<fns.length;k++){
+    skipFade=k>0;                               /* only the bottom layer clears the screen, so the others are not wiped */
+    try{ fns[k](t); }finally{ skipFade=false; }
+    g.globalCompositeOperation='source-over'; g.globalAlpha=1; g.shadowBlur=0; g.lineCap='butt'; g.lineJoin='miter';
+  }
 }
 let lastTick=0;
 function tick(t){
   if(t-lastTick<(document.hidden?28:6)) return;
   lastTick=t;
   analyse(t);
-  drift=(drift+0.0003+beat*0.0015)%1;
+  { const run=live&&act>0.05&&!(kind==='file'&&trackPaused()); if(document.body.classList.contains('live')!==run) document.body.classList.toggle('live',run); }
+  if(clearReq) wake(12);
+  if(act===0&&t>dirty&&!(silentSince&&t-silentSince>4000&&t-silentSince<4400)) return;     /* silence: leave the last picture exactly as it is */
+  drift=(drift+(0.0003+beat*0.0015)*(live?act:0))%1;
   if(beatCount!==hueBC){ hueBC=beatCount; const hs=STYLES[style].beatHue; if(hs) drift=(drift+hs)%1; }
   const st=STYLES[style], md=MODES[mode];
   if(clearReq){ G.globalCompositeOperation='source-over'; G.fillStyle='rgb('+st.bg+')'; FR.call(G,0,0,W,H); }
-  try{ if(md[2]||!st.post) md[1](t); else st.post(t,md[1]); }catch(e){ window.__prismErr=String(e&&e.stack||e); }
+  const draw=extra.length&&!md[2]?layered:md[1];
+  try{ if(md[2]||!st.post) draw(t); else st.post(t,draw); }catch(e){ window.__prismErr=String(e&&e.stack||e); }
   clearReq=false;
   G.globalCompositeOperation='source-over'; G.globalAlpha=1; G.shadowBlur=0;
   if(pipPrimed&&(pipOn||frameNo%6===0)) pcx.drawImage(cv,0,0,PW,PH);
@@ -2326,12 +2455,14 @@ function tick(t){
   if(frameNo%20===0){ const bt=live&&bpm&&t-lastBeat<3500?bpm+' BPM':''; if($('bpm').textContent!==bt) $('bpm').textContent=bt; }
 }
 function frame(t){ tick(t); requestAnimationFrame(frame); }
+['click','input','change','keydown','pointerup','visibilitychange'].forEach(ev=>document.addEventListener(ev,()=>wake(),true));
+addEventListener('resize',()=>wake()); addEventListener('load',()=>wake(60));
 setInterval(()=>{ if(document.hidden) tick(performance.now()); },33);
 
 /* ---------- controls ---------- */
 function buildModes(){
   const box=$('modes'); box.textContent='';
-  MODES.forEach((m,i)=>{ const b=document.createElement('button'); b.type='button'; b.textContent=m[0]; b.onclick=()=>setMode(i); box.appendChild(b); });
+  MODES.forEach((m,i)=>{ const b=document.createElement('button'); b.type='button'; b.textContent=m[0]; b.onclick=()=>pickMode(i); box.appendChild(b); });
 }
 Object.keys(PALS).forEach(k=>{
   const b=document.createElement('button'); b.type='button'; b.dataset.k=k;
@@ -2497,14 +2628,16 @@ addEventListener('keydown',e=>{
 /* ---------- favourites ---------- */
 let favs=[], favPos=-1;
 try{ const fv=JSON.parse(localStorage.getItem('prism-favs')||'[]'); if(Array.isArray(fv)) favs=fv.filter(f=>f&&STYLES[f.s]&&typeof f.m==='string'&&f.m!=='Lyrics').slice(0,12); favs.forEach(f=>{ if(f.m==='Picture 3D') f.m='Model 3D'; }); }catch(e){}
-const curLook=()=>({s:style,m:MODES[mode]?MODES[mode][0]:'',p:palName});
-const sameLook=(a,b)=>a.s===b.s&&a.m===b.m&&(!!STYLES[a.s].noPal||a.p===b.p);
+const curLook=()=>{ const o={s:style,m:MODES[mode]?MODES[mode][0]:'',p:palName}; if(extra.length) o.x=extra.slice(); return o; };
+const sameLook=(a,b)=>a.s===b.s&&a.m===b.m&&(a.x||[]).join('|')===(b.x||[]).join('|')&&(!!STYLES[a.s].noPal||a.p===b.p);
 function saveFavs(){ try{ localStorage.setItem('prism-favs',JSON.stringify(favs)); }catch(e){} }
 function applyFav(f){
   if(!f||!STYLES[f.s]) return;
   setStyle(f.s,false);
   if(Object.prototype.hasOwnProperty.call(PALS,f.p)) setPal(f.p);
-  const i=MODES.findIndex(m=>m[0]===f.m); setMode(i<0?0:i);
+  const i=MODES.findIndex(m=>m[0]===f.m), xs=Array.isArray(f.x)?f.x.filter(n=>typeof n==='string').slice(0,2):[];
+  extra.length=0; combine=xs.length>0||combine; xs.forEach(n=>extra.push(n)); $('bCombine').setAttribute('aria-pressed',String(combine));
+  setMode(i<0?0:i);
 }
 function refreshFavs(){
   const c=curLook(); let act=-1;
@@ -2817,6 +2950,11 @@ $('spId').addEventListener('keydown',e=>e.stopPropagation());
 })();
 document.addEventListener('visibilitychange',()=>{ if(!document.hidden&&(SPOT.tok||SPOT.ref)) spotPoll(); });
 
+$('bCombine').onclick=()=>{
+  combine=!combine; $('bCombine').setAttribute('aria-pressed',String(combine));
+  setMode(mode); say(combine?'Combine is on: choose up to three display modes. Press a lit one to take it away.':'');
+};
+
 /* ---------- collapsible menu ---------- */
 let folds={};
 try{ const fo=JSON.parse(localStorage.getItem('prism-folds')||'{}'); if(fo&&typeof fo==='object') folds=fo; }catch(e){}
@@ -2865,6 +3003,7 @@ const HELP={
   bSmooth:'Switches the Scope and X-Y traces between the raw, jagged signal and a soft, flowing line.',
   bPic:'Lets you choose a picture from this device. The Picture modes then bend and reshape it in time with the music.',
   bPicReset:'Goes back to the built-in picture.',
+  bCombine:'Lets you layer up to three display modes on the screen at once. While it is on, each display mode key adds or removes a layer instead of replacing the picture.',
   bSp:'Links Prism to your Spotify account so it can show the track that is playing, put its cover on the record and move the tonearm with the song. It cannot hear Spotify, so keep the microphone on.',
   bMdl:'Lets you choose a 3D model from this device. It must be a single .glb file. The model then spins, swells and twists in time with the music.',
   bMdlReset:'Goes back to the built-in 3D shape.',
