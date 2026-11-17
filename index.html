@@ -91,7 +91,10 @@ button:focus-visible{outline:2px solid #d9522b;outline-offset:2px}
 .fader:focus-visible{outline:2px solid #d9522b;outline-offset:2px}
 .fad .lbl{flex:none}
 .fad .lbl::after{display:none}
-#file{position:absolute;width:1px;height:1px;opacity:0;pointer-events:none}
+#lyrEdit{display:flex;flex-direction:column;gap:8px}
+#lyrText{width:100%;min-height:110px;padding:9px 10px;font:400 14px/1.4 system-ui,-apple-system,sans-serif;letter-spacing:0;text-transform:none;color:#eafff0;background:#060d09;border:1px solid #6d7174;border-radius:3px;box-shadow:inset 0 2px 6px #000;resize:vertical;-webkit-user-select:text;user-select:text}
+#lyrText:focus-visible{outline:2px solid #d9522b;outline-offset:2px}
+#file,#lrcFile{position:absolute;width:1px;height:1px;opacity:0;pointer-events:none}
 #now{flex:1;min-width:0}
 #bpm{flex:none;white-space:nowrap}
 .sel{flex:1;min-width:0;height:34px;padding:0 10px;font:400 13px/1 var(--read);text-transform:uppercase;letter-spacing:.04em;color:var(--phos);background:#060d09;border:1px solid #6d7174;border-radius:3px;box-shadow:inset 0 2px 6px #000;-webkit-appearance:none;appearance:none}
@@ -158,7 +161,7 @@ body.quiet #screen{margin:0!important;border-radius:0!important;box-shadow:none!
     <span class="lbl">Input</span>
     <div class="keys">
       <button id="bFile" type="button">Files</button>
-      <input type="file" id="file" accept="audio/*,.mp3,.m4a,.aac,.wav,.flac,.ogg,.oga,.opus,.aif,.aiff,.caf,.mp4" multiple tabindex="-1" aria-hidden="true">
+      <input type="file" id="file" accept="audio/*,.mp3,.m4a,.aac,.wav,.flac,.ogg,.oga,.opus,.aif,.aiff,.caf,.mp4,.lrc,.txt,text/plain" multiple tabindex="-1" aria-hidden="true">
       <button id="bMic" type="button">Mic</button>
       <button id="bTab" type="button">Tab audio</button>
       <button id="bDemo" type="button">Demo</button>
@@ -203,6 +206,25 @@ body.quiet #screen{margin:0!important;border-radius:0!important;box-shadow:none!
   <div class="grp" id="palGrp">
     <span class="lbl">Trace colour</span>
     <div class="keys scroll" id="pals"></div>
+  </div>
+  <div class="grp" id="lyrGrp" hidden>
+    <span class="lbl">Lyrics</span>
+    <div class="keys">
+      <button id="bLyrAdd" type="button">Add lyrics</button>
+      <button id="bLyrDetect" type="button" aria-pressed="false" hidden>Detect words</button>
+      <button id="bLyrPrev" type="button" hidden>Previous line</button>
+      <button id="bLyrNext" type="button" hidden>Next line</button>
+      <button id="bLyrClear" type="button" hidden>Clear lyrics</button>
+    </div>
+    <div id="lyrEdit" hidden>
+      <textarea id="lyrText" rows="6" aria-label="Lyrics" placeholder="Paste or type the words here, one line per line. Timed .lrc text works too."></textarea>
+      <div class="keys">
+        <button id="bLyrUse" type="button">Use these words</button>
+        <button id="bLyrFile" type="button">Choose lyric file</button>
+        <button id="bLyrCancel" type="button">Cancel</button>
+      </div>
+      <input type="file" id="lrcFile" accept=".lrc,.txt,text/plain" tabindex="-1" aria-hidden="true">
+    </div>
   </div>
   <div class="grp">
     <span class="lbl">Favourites</span>
@@ -309,6 +331,7 @@ function mark(){
   $('transport').hidden = kind!=='file';
   $('micGrp').hidden = kind!=='mic';
   $('demoGrp').hidden = kind!=='demo';
+  lyrReset(); lyrUi();
   liveSince=performance.now();
   spin();
 }
@@ -411,6 +434,122 @@ function disconnect(){
 function goIdle(text){ disconnect(); mark(); setNow(text||'Pick a sound source below to begin'); }
 
 /* ---------- track tags: title, artist and cover art from MP3, M4A and FLAC files ---------- */
+/* ---------- lyrics: read from the track's own tags, a .lrc or .txt file, or pasted words ---------- */
+const stamp=(m,s,f)=>(+m)*60+(+s)+(f?+('0.'+f):0);
+function parseLyrics(text){
+  const lines=[]; let synced=false, offset=0;
+  for(const raw of String(text||'').replace(/\r/g,'').split('\n')){
+    const om=raw.match(/^\s*\[offset:\s*([+-]?\d+)\s*\]/i); if(om){ offset=+om[1]/1000; continue; }
+    const stamps=[]; let rest=raw, mm;
+    while((mm=rest.match(/^\s*\[(\d{1,3}):(\d{1,2})(?:[.:](\d{1,3}))?\]/))){ stamps.push(stamp(mm[1],mm[2],mm[3])); rest=rest.slice(mm[0].length); }
+    if(/^\s*\[[a-z#]+:.*\]\s*$/i.test(rest)) continue;
+    const words=[], parts=rest.split(/<(\d{1,3}):(\d{1,2})(?:[.:](\d{1,3}))?>/);
+    let tcur=null;
+    for(let i=0;i<parts.length;i+=4){
+      const seg=(parts[i]||'').trim();
+      if(seg) seg.split(/\s+/).forEach((w,k)=>words.push({w:w,t:k===0?tcur:null}));
+      if(i+3<parts.length) tcur=stamp(parts[i+1],parts[i+2],parts[i+3]);
+    }
+    const line=words.map(x=>x.w).join(' ');
+    if(stamps.length){ synced=true; stamps.forEach(tm=>lines.push({t:Math.max(0,tm-offset),text:line,words:words.map(x=>({w:x.w,t:x.t===null?null:Math.max(0,x.t-offset)}))})); }
+    else if(line) lines.push({t:null,text:line,words:words});
+  }
+  let out=lines;
+  if(synced) out=lines.filter(l=>l.t!==null).sort((a,b)=>a.t-b.t);
+  return out.length?{lines:out,synced:synced}:null;
+}
+function syltLyrics(rows){
+  const lines=rows.filter(r=>r.text&&r.text.trim()).map(r=>({t:r.t,text:r.text.trim(),words:r.text.trim().split(/\s+/).map(w=>({w:w,t:null}))})).sort((a,b)=>a.t-b.t);
+  return lines.length?{lines:lines,synced:true}:null;
+}
+/* read one terminated string from a tag frame: returns [text, next position] */
+function id3str(b,p,enc){
+  let e=p;
+  if(enc===1||enc===2){ while(e+1<b.length&&(b[e]||b[e+1])) e+=2; const s=b.subarray(p,e); return [txt(s,enc===2||(s[0]===0xFE&&s[1]===0xFF)?'utf-16be':'utf-16le'),e+2]; }
+  while(e<b.length&&b[e]) e++;
+  return [txt(b.subarray(p,e),enc===3?'utf-8':'iso-8859-1'),e+1];
+}
+function id3uslt(b){
+  if(b.length<5) return '';
+  const enc=b[0], r=id3str(b,4,enc), rest=b.subarray(Math.min(b.length,r[1]));
+  try{ return new TextDecoder(enc===3?'utf-8':enc===0?'iso-8859-1':enc===2||(rest[0]===0xFE&&rest[1]===0xFF)?'utf-16be':'utf-16le').decode(rest).replace(/\0+$/,''); }catch(e){ return ''; }
+}
+function id3sylt(b){
+  if(b.length<8||b[4]!==2) return null;
+  const enc=b[0], rows=[]; let p=id3str(b,6,enc)[1];
+  while(p<b.length-4){
+    const r=id3str(b,p,enc); p=r[1]; if(p+4>b.length) break;
+    rows.push({text:r[0].replace(/\n/g,' '),t:(((b[p]<<24)|(b[p+1]<<16)|(b[p+2]<<8)|b[p+3])>>>0)/1000}); p+=4;
+  }
+  /* some files store one word per entry: join words into lines of up to seven */
+  if(rows.length>40&&rows.every(r=>r.text.trim().split(/\s+/).length<=2)){
+    const out=[]; for(let i=0;i<rows.length;i+=7) out.push({t:rows[i].t,text:rows.slice(i,i+7).map(r=>r.text.trim()).join(' ')});
+    return out;
+  }
+  return rows;
+}
+let liveLyr=null;
+const lyS={key:null,i:-1,start:0,off:0,src:''};
+const lyrCur=()=>kind==='file'?((playlist[trackIdx]&&playlist[trackIdx].lyr)||null):liveLyr;
+const lyrClock=()=>kind==='file'?trackTime():performance.now()/1000;
+function lyrReset(){ lyS.key=null; }
+function lyrLineDur(L,c){
+  if(kind==='file'){ const d=trackDur(); if(isFinite(d)&&d>0) return Math.min(12,Math.max(1.5,(d*0.97-c)/Math.max(1,L.lines.length-Math.max(0,lyS.i)))); return 4; }
+  return bpm&&performance.now()-lastBeat<4000?Math.min(8,Math.max(1.5,8*60/bpm)):4;
+}
+/* where we are in the lyrics: line index, progress through the line (0 to 1) */
+function lyrStep(L){
+  const c=lyrClock(), n=L.lines.length;
+  if(lyS.key!==L||lyS.src!==kind){
+    lyS.key=L; lyS.src=kind; lyS.i=-1; lyS.start=c; lyS.dur=0;
+    lyS.off=L.synced&&kind!=='file'?L.lines[0].t-c-0.01:0;
+    if(!L.synced&&kind==='file'){ const d=trackDur(); lyS.intro=isFinite(d)&&d>0?Math.min(12,d*0.06):3; } else lyS.intro=0;
+  }
+  if(L.synced){
+    const te=c+lyS.off; let i=-1;
+    for(let k=0;k<n&&L.lines[k].t<=te;k++) i=k;
+    lyS.i=i;
+    if(i<0) return {i:-1,f:0,te:te};
+    const dur=Math.min(8,(i+1<n?L.lines[i+1].t:L.lines[i].t+5)-L.lines[i].t);
+    return {i:i,f:Math.min(1,(te-L.lines[i].t)/Math.max(0.3,dur)),te:te};
+  }
+  if(lyS.i<0){
+    if(c<lyS.intro&&kind==='file') return {i:-1,f:0,te:c};
+    lyS.i=0; lyS.start=c; lyS.dur=lyrLineDur(L,c);
+  }
+  if(c<lyS.start) lyS.start=c;
+  while(c-lyS.start>=lyS.dur&&lyS.i<n-1){ lyS.i++; lyS.start+=lyS.dur; lyS.dur=lyrLineDur(L,lyS.start); }
+  return {i:lyS.i,f:Math.min(1,(c-lyS.start)/Math.max(0.3,lyS.dur)),te:c};
+}
+function lyrJump(delta){
+  const L=lyrCur(); if(!L) return;
+  lyrStep(L);
+  const c=lyrClock(), tgt=Math.max(0,Math.min(L.lines.length-1,Math.max(0,lyS.i)+(lyS.i<0&&delta>0?0:delta)));
+  if(L.synced) lyS.off=L.lines[tgt].t-c;
+  else{ lyS.i=tgt; lyS.start=c; lyS.dur=lyrLineDur(L,c); }
+}
+function lyrWord(line,pos){
+  const ws=line.words, n=ws.length; if(!n) return -1;
+  if(ws.some(w=>w.t!==null)){ let wi=0; for(let k=0;k<n;k++) if(ws[k].t!==null&&ws[k].t<=pos.te) wi=k; return wi; }
+  let tot=0; for(const w of ws) tot+=w.w.length+2;
+  let acc=0; const target=pos.f/0.92*tot;
+  for(let k=0;k<n;k++){ acc+=ws[k].w.length+2; if(target<acc) return k; }
+  return n-1;
+}
+function setLyrics(text,forFile){
+  const L=typeof text==='string'?parseLyrics(text):text;
+  if(kind==='file'&&playlist[trackIdx]) playlist[trackIdx].lyr=L; else liveLyr=L;
+  lyrReset(); lyrUi();
+  return L;
+}
+function lyrUi(){
+  const on=!!MODES[mode]&&MODES[mode][0]==='Lyrics', L=lyrCur();
+  $('lyrGrp').hidden=!on;
+  $('bLyrPrev').hidden=$('bLyrNext').hidden=$('bLyrClear').hidden=!L;
+  const dj=typeof asrJob!=='undefined'&&asrJob;
+  $('bLyrDetect').hidden=kind!=='file'; $('bLyrDetect').textContent=dj?'Stop detecting':'Detect words'; $('bLyrDetect').setAttribute('aria-pressed',String(!!dj));
+}
+
 function txt(bytes,enc){ try{ return new TextDecoder(enc).decode(bytes).split('\0')[0].trim(); }catch(e){ return ''; } }
 const fourcc=(dv,o)=>String.fromCharCode(dv.getUint8(o),dv.getUint8(o+1),dv.getUint8(o+2),dv.getUint8(o+3));
 function id3txt(b){
@@ -446,6 +585,9 @@ async function id3(f,h){
     if(id==='TIT2'||id==='TT2') out.title=id3txt(body);
     else if(id==='TPE1'||id==='TP1') out.artist=id3txt(body);
     else if((id==='APIC'||id==='PIC')&&!out.pic) out.pic=id3pic(body,ver===2);
+    else if((id==='USLT'||id==='ULT')&&!out.lyrics) out.lyrics=id3uslt(body);
+    else if(id==='SYLT'&&!out.sylt) out.sylt=id3sylt(body);
+    else if((id==='TXXX'||id==='TXX')&&!out.lyrics&&body.length>2){ const ds=id3str(body,1,body[0]); if(/lyric/i.test(ds[0])){ try{ out.lyrics=new TextDecoder(body[0]===3?'utf-8':body[0]===0?'iso-8859-1':body[0]===2||(body[ds[1]]===0xFE&&body[ds[1]+1]===0xFF)?'utf-16be':'utf-16le').decode(body.subarray(ds[1])).replace(/\0+$/,''); }catch(e){} } }
   }
   return out;
 }
@@ -461,7 +603,7 @@ async function flacTags(f){
         for(let i=0;i<cnt&&p+4<=b.length;i++){
           const l=dv.getUint32(p,true); p+=4; const s=txt(b.subarray(p,p+l),'utf-8'); p+=l;
           const eq=s.indexOf('='), k=s.slice(0,eq).toUpperCase(), v=s.slice(eq+1);
-          if(k==='TITLE') out.title=v; else if(k==='ARTIST') out.artist=v;
+          if(k==='TITLE') out.title=v; else if(k==='ARTIST') out.artist=v; else if(k==='LYRICS'||k==='UNSYNCEDLYRICS'||k==='SYNCEDLYRICS') out.lyrics=out.lyrics||v;
         }
       }else if(!out.pic){
         let p=4; const ml=dv.getUint32(p); p+=4; const mime=txt(b.subarray(p,p+ml),'utf-8'); p+=ml;
@@ -498,6 +640,7 @@ async function mp4Tags(f){
       const body=moov.subarray(d[0]+8,d[1]);
       if(t==='©nam') out.title=txt(body,'utf-8');
       else if(t==='©ART') out.artist=txt(body,'utf-8');
+      else if(t==='©lyr'){ try{ out.lyrics=new TextDecoder('utf-8').decode(body); }catch(e){} }
       else if(t==='covr'&&!out.pic) out.pic=new Blob([body],{type:dv.getUint32(d[0])===14?'image/png':'image/jpeg'});
     }
     p+=sz;
@@ -524,6 +667,7 @@ function showTrack(){
 function loadTags(item){
   readTags(item.file).then(m=>{
     item.meta=m||{};
+    if(m&&!item.lyr){ const L=(m.sylt&&m.sylt.length?syltLyrics(m.sylt):null)||(m.lyrics?parseLyrics(m.lyrics):null); if(L){ item.lyr=L; if(playlist[trackIdx]===item){ lyrReset(); lyrUi(); } } }
     if(m&&m.pic){ item.art=URL.createObjectURL(m.pic); const im=new Image(); im.onload=()=>{ item.img=im; }; im.src=item.art; }
     if(kind==='file'&&playlist[trackIdx]===item) showTrack();
   }).catch(()=>{});
@@ -559,8 +703,24 @@ function unlockAudio(){
     if(pr&&pr.then) pr.then(()=>{ unlocked=true; if(kind!=='file') audio.pause(); }).catch(()=>{});
   }catch(e){}
 }
+const isLyricFile=f=>/\.(lrc|txt)$/i.test(f.name||'');
+const baseName=n=>String(n).replace(/\.[^.]+$/,'').toLowerCase();
+function attachLyricFiles(lfs){
+  lfs.forEach(lf=>{
+    lf.text().then(tx=>{
+      const L=parseLyrics(tx); if(!L) return;
+      let item=playlist.find(it=>baseName(it.file.name)===baseName(lf.name));
+      if(!item&&(playlist.length===1||lfs.length===1)) item=playlist.length===1?playlist[0]:playlist[trackIdx];
+      if(kind==='file'&&item){ item.lyr=L; if(playlist[trackIdx]===item){ lyrReset(); lyrUi(); } }
+      else if(kind!=='file'){ liveLyr=L; lyrReset(); lyrUi(); }
+    }).catch(()=>{});
+  });
+}
 function useFiles(files){
-  files=[...files].filter(isAudioFile);
+  const all=[...files], lfs=all.filter(isLyricFile);
+  if(all.some(f=>isAudioFile(f)&&!isLyricFile(f))&&typeof asrJob!=='undefined'&&asrJob){ asrJob=null; asrMsg=''; }
+  files=all.filter(f=>isAudioFile(f)&&!isLyricFile(f));
+  if(!files.length&&lfs.length){ attachLyricFiles(lfs); return say(''); }
   if(!files.length) return say('No audio files were chosen. MP3, M4A, AAC, WAV and FLAC files work.');
   try{ ensureCtx(); }catch(e){ return say('This browser cannot start audio.'); }
   disconnect();
@@ -570,6 +730,7 @@ function useFiles(files){
     return {name:String(f.name).replace(/\.[^.]+$/,''),url:URL.createObjectURL(blob),file:f,tried:false};
   });
   playlist.forEach(loadTags);
+  if(lfs.length) attachLyricFiles(lfs);
   if(!elSrc){ elSrc=ac.createMediaElementSource(audio); elSrc.connect(inp); }
   sessionType('playback');
   outGain.gain.value=1; kind='file'; live=true; mark(); say('');
@@ -616,6 +777,7 @@ function playTrack(i){
   decStop();
   trackIdx=(i+playlist.length)%playlist.length;
   const item=playlist[trackIdx];
+  lyrReset(); lyrUi();
   showTrack();
   if(location.hash==='#decode'){ audio.pause(); decodeFallback(); return; }
   audio.src=item.url;
@@ -626,7 +788,7 @@ function playTrack(i){
   });
 }
 audio.addEventListener('ended',()=>{ if(kind==='file'&&!dec) playTrack(trackIdx+1); });
-audio.addEventListener('play',()=>{ if(kind==='file'){ $('bPlay').textContent='Pause'; say(''); } spin(); });
+audio.addEventListener('play',()=>{ if(kind==='file'){ $('bPlay').textContent='Pause'; if($('msg').textContent.indexOf('Tap Play')===0) say(''); } spin(); });
 audio.addEventListener('pause',()=>{ if(kind==='file'&&!dec) $('bPlay').textContent='Play'; spin(); });
 audio.addEventListener('error',()=>{ if(kind==='file'&&!dec&&audio.src&&audio.src!==silentSrc) decodeFallback(); });
 
@@ -1056,7 +1218,63 @@ function mXY(){
   g.lineJoin='round'; g.shadowColor=col(0.1,1); g.shadowBlur=12*U;
   g.strokeStyle=col(0.1,0.9); g.lineWidth=1.6*U; g.stroke(); g.shadowBlur=0;
 }
-const GENERIC=[['Scope',mScope],['X-Y',mXY],['Bars',mBars],['Radial',mRadial],['Ribbons',mRibbons],['Particles',mParticles],['Tunnel',mTunnel],['Kaleidoscope',mKaleido],['Terrain',mTerrain],['Orbs',mOrbs]];
+/* lyrics display: the word being sung, large, with the full line beneath lighting up word by word */
+const SANS='system-ui,-apple-system,"Helvetica Neue",Arial,sans-serif';
+function lyrText(s,x,y){ if(WIRE){ g.lineWidth=1.3*U; g.strokeStyle=g.fillStyle; g.strokeText(s,x,y); } else g.fillText(s,x,y); }
+function mLyrics(t){
+  fade(0.4);
+  const b=bands(24), m=Math.min(W,H), small=W<300;
+  /* a low bed of bars keeps the screen moving with the music */
+  const bw=W/24;
+  for(let i=0;i<24;i++){ const h=b[i]*H*0.16+U; g.fillStyle=col(i/24*0.8,0.45); FR.call(g,i*bw+bw*0.15,H-h,bw*0.7,h); }
+  g.textAlign='center'; g.textBaseline='middle';
+  const L=lyrCur();
+  if(!L){
+    const fz=Math.max(6,m*(small?0.11:0.05));
+    g.font='600 '+fz+'px '+SANS; g.fillStyle=col(0,0.9);
+    const busy=typeof asrMsg!=='undefined'&&asrMsg&&asrJob&&kind==='file'&&asrJob.item===playlist[trackIdx];
+    (busy?(small?['WAIT']:[asrMsg,'The words will appear as they are worked out']):small?['NO','LYRICS']:['No lyrics for this music yet','Add an .lrc or .txt file with your track,','paste the words with Add lyrics,','or try Detect words on a file']).forEach((s,i,a)=>lyrText(s,W/2,H*0.45+(i-(a.length-1)/2)*fz*1.5));
+    return;
+  }
+  const pos=lyrStep(L), line=pos.i>=0?L.lines[pos.i]:null, next=L.lines[pos.i+1];
+  if(!small&&typeof asrMsg!=='undefined'&&asrMsg&&asrJob&&kind==='file'&&asrJob.item===playlist[trackIdx]){
+    g.font='500 '+(m*0.032)+'px '+SANS; g.fillStyle=col(0.4,0.6); lyrText(asrMsg,W/2,H*0.08);
+  }
+  const round=Math.abs(W-H)<W*0.08, punch=1+beat*0.09+bass*0.05, cy=small?H*0.42:round?H*0.2:H*0.36;
+  if(!line||!line.words.length){
+    /* waiting for the first line, or an instrumental gap */
+    for(let i=0;i<3;i++){ g.fillStyle=col(i*0.2,0.5+0.5*beat); g.beginPath(); g.arc(W/2+(i-1)*m*0.09,cy,m*(0.018+0.02*b[i*4]),0,TAU); g.fill(); }
+  }else{
+    const wi=Math.max(0,lyrWord(line,pos)), word=line.words[wi].w.toUpperCase();
+    g.font='800 100px '+SANS;
+    const fz=Math.min(H*(small?0.5:round?0.15:0.2),W*(round?0.66:0.86)/Math.max(1,g.measureText(word).width)*100)*punch;
+    g.font='800 '+fz+'px '+SANS;
+    if(!small&&!WIRE&&!MONO){ g.shadowColor=col(wi*0.13,0.9); g.shadowBlur=18*U*(0.4+beat); }
+    g.fillStyle=col(wi*0.13,1); lyrText(word,W/2,cy); g.shadowBlur=0;
+    if(!small){
+      /* the whole line, wrapped, with sung words bright and the rest dim */
+      const fs=m*(round?0.05:0.058), gap=fs*0.32, maxW=W*(round?0.72:0.88), rows=[[]]; let rw=0;
+      g.font='600 '+fs+'px '+SANS;
+      line.words.forEach((w,k)=>{ const ww=g.measureText(w.w).width; if(rw+ww>maxW&&rows[rows.length-1].length){ rows.push([]); rw=0; } rows[rows.length-1].push({k:k,w:w.w,ww:ww}); rw+=ww+gap; });
+      let y=round?H*0.74:H*0.56;
+      for(const row of rows){
+        const tw=row.reduce((a,r)=>a+r.ww,0)+gap*(row.length-1); let x=W/2-tw/2;
+        for(const r of row){
+          g.fillStyle=r.k<wi?col(0.05,0.95):r.k===wi?'rgba(255,255,255,1)':col(0.05,0.32);
+          g.textAlign='left'; lyrText(r.w,x,y); x+=r.ww+gap;
+        }
+        y+=fs*1.4;
+      }
+      g.textAlign='center';
+      if(next&&next.text&&!round){
+        g.font='500 '+(fs*0.72)+'px '+SANS; g.fillStyle=col(0.4,0.3);
+        let s=next.text; while(s.length>8&&g.measureText(s).width>maxW) s=s.slice(0,-2);
+        lyrText(s===next.text?s:s+'...',W/2,y+fs*0.5);
+      }
+    }
+  }
+}
+const GENERIC=[['Scope',mScope],['X-Y',mXY],['Bars',mBars],['Radial',mRadial],['Ribbons',mRibbons],['Particles',mParticles],['Tunnel',mTunnel],['Kaleidoscope',mKaleido],['Terrain',mTerrain],['Orbs',mOrbs],['Lyrics',mLyrics]];
 let MODES=GENERIC.slice();
 
 /* ---------- buffers and style pipelines ---------- */
@@ -1524,7 +1742,7 @@ function setMode(i){
   mode=(i+MODES.length)%MODES.length; lastSwitch=performance.now(); clearReq=true;
   fade(1);
   document.querySelectorAll('#modes button').forEach((b,k)=>b.setAttribute('aria-pressed',String(k===mode)));
-  lastSwitchBeat=beatCount; refreshFavs();
+  lastSwitchBeat=beatCount; refreshFavs(); lyrUi();
 }
 let lastTick=0;
 function tick(t){
@@ -1690,6 +1908,7 @@ function autoNext(){
   if(autoFavs&&favs.length>1){ favPos=(favPos+1)%favs.length; applyFav(favs[favPos]); }
   else{
     setMode(mode+1);
+    if(MODES[mode][0]==='Lyrics'&&!lyrCur()) setMode(mode+1);
     if(++palTurn2%2===0&&!STYLES[style].noPal){ const ks=Object.keys(PALS); setPal(ks[(ks.indexOf(palName)+1)%ks.length]); }
   }
   lastSwitch=performance.now(); lastSwitchBeat=beatCount;
@@ -1773,6 +1992,130 @@ function recSave(){
 $('bRec').onclick=()=>{ if(rec) recStop(); else if(recBlob) recSave(); else recStart(); };
 $('bRecDel').onclick=()=>{ recBlob=null; recLabel(); say(''); };
 
+/* read-only peek used when testing */
+window.__prism={lyr:()=>{ const L=lyrCur(); if(!L) return null; const ps=lyrStep(L); return {n:L.lines.length,synced:L.synced,i:ps.i,line:ps.i>=0?L.lines[ps.i].text:'',word:ps.i>=0&&L.lines[ps.i].words.length?L.lines[ps.i].words[Math.max(0,lyrWord(L.lines[ps.i],ps))].w:''}; }};
+
+/* ---------- word detection: a small speech model listens to the chosen track on this device and writes down what it hears ---------- */
+const ASR_LIB='https://cdn.jsdelivr.net/npm/@huggingface/transformers@3.8.1/dist/transformers.min.js';
+const ASR_SRC=[
+  "import { pipeline, env } from '"+ASR_LIB+"';",
+  "env.allowLocalModels=false;",
+  "let asr=null, loading=null;",
+  "async function load(){",
+  "  const opt={progress_callback:p=>{ if(p&&p.status==='progress'&&p.total) self.postMessage({t:'dl',l:p.loaded,n:p.total}); }};",
+  "  try{ return await pipeline('automatic-speech-recognition','onnx-community/whisper-tiny_timestamped',opt); }",
+  "  catch(e){ return await pipeline('automatic-speech-recognition','onnx-community/whisper-base_timestamped',opt); }",
+  "}",
+  "self.onmessage=async e=>{",
+  "  const d=e.data;",
+  "  try{",
+  "    if(!asr){ self.postMessage({t:'loading'}); asr=await (loading||(loading=load())); }",
+  "    const out=await asr(d.audio,{return_timestamps:'word',language:'english',task:'transcribe'});",
+  "    self.postMessage({t:'chunk',id:d.id,k:d.k,off:d.off,chunks:(out&&out.chunks)||[]});",
+  "  }catch(err){ self.postMessage({t:'error',id:d.id,m:String(err&&err.message||err)}); }",
+  "};"
+].join('\n');
+const ASR_PART=16000*28;
+let asrWorker=null, asrJob=null, asrSeq=0, asrMsg='';
+function asrWords(job,chunks,off){
+  for(const c of chunks){
+    const w=String(c.text||'').trim(), ts=c.timestamp||[];
+    if(!w||!isFinite(ts[0])) continue;
+    if(/^[\[\(\*♪]|[\]\)\*♪]$/.test(w)) continue;                       /* "[Music]" and similar */
+    const ws=job.words, n=ws.length, lw=w.toLowerCase();
+    if(n>=3&&ws[n-1].w.toLowerCase()===lw&&ws[n-2].w.toLowerCase()===lw&&ws[n-3].w.toLowerCase()===lw) continue;   /* a stuck, repeating guess */
+    ws.push({w:w,t:ts[0]+off,e:isFinite(ts[1])?ts[1]+off:ts[0]+off+0.3});
+  }
+}
+function wordsToLyrics(ws){
+  const lines=[]; let cur=null;
+  for(const x of ws){
+    const last=cur&&cur.words.length?cur.words[cur.words.length-1].w:'';
+    if(!cur||x.t-cur.end>0.9||cur.words.length>=7||(cur.words.length>=4&&/[.!?,;]$/.test(last))){ cur={t:x.t,words:[],end:x.e,text:''}; lines.push(cur); }
+    cur.words.push({w:x.w,t:x.t}); cur.end=x.e;
+  }
+  const out=[];
+  lines.forEach((l,i)=>{ l.text=l.words.map(w=>w.w).join(' '); out.push(l); const nx=lines[i+1]; if(nx&&nx.t-l.end>5) out.push({t:l.end+1.2,text:'',words:[]}); });
+  return out.length?{lines:out,synced:true,auto:true}:null;
+}
+function asrEnd(message){
+  asrJob=null; asrMsg=''; lyrUi();
+  if(message) say(message);
+}
+function asrFail(detail){
+  if(asrWorker){ try{ asrWorker.terminate(); }catch(e){} asrWorker=null; }
+  if(asrJob) asrEnd('Word detection could not run. It needs an internet connection to fetch the speech model, and it does not work inside the Claude app viewer.'+(detail?' ('+detail+')':''));
+}
+function asrSend(job){
+  const a=job.k*ASR_PART, piece=job.audio.slice(a,a+ASR_PART);
+  if(!asrMsg||asrMsg.indexOf('Fetching')<0) asrMsg='Detecting words, part '+(job.k+1)+' of '+job.n;
+  asrWorker.postMessage({id:job.id,k:job.k,off:a/16000,audio:piece},[piece.buffer]);
+}
+function asrOnMsg(e){
+  const d=e.data||{}, job=asrJob;
+  if(!job) return;
+  job.heard=true;
+  if(d.t==='loading'){ asrMsg='Fetching the speech model, about 60 MB, first time only'; return; }
+  if(d.t==='dl'){ if(d.n>5e6) asrMsg='Fetching the speech model, '+Math.round(d.l/d.n*100)+'%'; return; }
+  if(d.id!==job.id) return;
+  if(d.t==='error') return asrFail(String(d.m||'').slice(0,90));
+  if(d.t==='chunk'){
+    asrWords(job,d.chunks||[],d.off||0);
+    const L=wordsToLyrics(job.words);
+    if(L){ job.item.lyr=L; if(kind==='file'&&playlist[trackIdx]===job.item) lyrReset(); }
+    job.k++;
+    asrMsg='';
+    if(job.k<job.n){ asrSend(job); lyrUi(); }
+    else asrEnd(job.words.length?'':'No words were found in this track.');
+  }
+}
+async function detectWords(){
+  if(asrJob){ asrEnd(''); return; }
+  const item=playlist[trackIdx];
+  if(kind!=='file'||!item) return say('Word detection works on music you load with the Files key.');
+  if(!window.Worker) return say('Word detection is not supported in this browser.');
+  const job=asrJob={id:++asrSeq,item:item,k:0,n:0,words:[],audio:null};
+  asrMsg='Reading the track'; lyrUi(); say('');
+  try{
+    const ab=await item.file.arrayBuffer();
+    const buf=await new Promise((res,rej)=>{ const pr=ac.decodeAudioData(ab,res,rej); if(pr&&pr.catch) pr.catch(rej); });
+    if(asrJob!==job) return;
+    /* mix to mono and bring down to 16 kHz, which is what the speech model expects */
+    const r=buf.sampleRate/16000, n=Math.floor(buf.length/r), mono=new Float32Array(n), chs=[];
+    for(let c=0;c<buf.numberOfChannels;c++) chs.push(buf.getChannelData(c));
+    for(let j=0;j<n;j++){
+      const a=Math.floor(j*r), b=Math.min(buf.length,Math.max(a+1,Math.floor((j+1)*r))); let sum=0;
+      for(let i=a;i<b;i++) for(let c=0;c<chs.length;c++) sum+=chs[c][i];
+      mono[j]=sum/((b-a)*chs.length);
+    }
+    job.audio=mono; job.n=Math.max(1,Math.ceil(n/ASR_PART));
+    if(!asrWorker){
+      asrWorker=new Worker(URL.createObjectURL(new Blob([ASR_SRC],{type:'text/javascript'})),{type:'module'});
+      asrWorker.onmessage=asrOnMsg; asrWorker.onerror=()=>asrFail('');
+    }
+    asrSend(job); lyrUi();
+    setTimeout(()=>{ if(asrJob===job&&!job.heard) asrFail('no reply'); },45000);
+  }catch(e){ if(asrJob===job) asrEnd('That track could not be read for word detection.'); }
+}
+
+/* ---------- lyrics controls ---------- */
+$('bLyrDetect').onclick=detectWords;
+$('bLyrAdd').onclick=()=>{ $('lyrEdit').hidden=!$('lyrEdit').hidden; };
+$('bLyrCancel').onclick=()=>{ $('lyrEdit').hidden=true; };
+$('bLyrUse').onclick=()=>{
+  const L=setLyrics($('lyrText').value);
+  if(!L) return say('There were no words to use. Paste or type the lyrics first.');
+  $('lyrEdit').hidden=true; say('');
+};
+$('bLyrFile').onclick=()=>$('lrcFile').click();
+$('lrcFile').onchange=e=>{
+  const f=e.target.files[0]; e.target.value=''; if(!f) return;
+  f.text().then(tx=>{ const L=setLyrics(tx); if(!L) return say('That file had no lyrics in it.'); $('lyrText').value=tx; $('lyrEdit').hidden=true; say(''); }).catch(()=>say('That file could not be read.'));
+};
+$('bLyrPrev').onclick=()=>lyrJump(-1);
+$('bLyrNext').onclick=()=>lyrJump(1);
+$('bLyrClear').onclick=()=>{ if(asrJob) asrEnd(''); setLyrics(null); };
+
 /* ---------- collapsible menu ---------- */
 function setFold(open){
   $('bFold').setAttribute('aria-expanded',String(open)); $('beatBody').hidden=!open;
@@ -1804,7 +2147,15 @@ const HELP={
   bFull:'Hides all the controls so the visuals fill the screen. Tap the screen to bring them back.',
   bLock:'Freezes the current look and hides the controls. Taps are ignored until you hold the screen for two seconds.',
   bRec:'Records up to 15 seconds of the visuals as a video you can save or share.',
-  bRecDel:'Throws away the clip you just recorded.'
+  bRecDel:'Throws away the clip you just recorded.',
+  bLyrAdd:'Opens a box where you can paste or type the words to a song, or choose a lyric file.',
+  bLyrPrev:'Jumps back one line and carries on from there. Use it if the words are running ahead of the music.',
+  bLyrNext:'Jumps forward one line and carries on from there. Use it if the words are running behind the music.',
+  bLyrClear:'Removes the lyrics from the screen for this music.',
+  bLyrUse:'Shows the words in the box on screen, in time with the music as closely as it can.',
+  bLyrFile:'Lets you pick a lyric file, such as an .lrc file with timings, from this device.',
+  bLyrCancel:'Closes the lyrics box without changing anything.',
+  bLyrDetect:'Listens to the track you loaded and writes down the words it thinks it hears, timed to the music. It is a best guess and can take a few minutes.'
 };
 let tipTimer=null, tipFor=null, tipShown=null;
 function tipHide(){ clearTimeout(tipTimer); tipTimer=null; tipFor=null; $('tip').hidden=true; }
