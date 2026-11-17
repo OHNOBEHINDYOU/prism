@@ -612,7 +612,7 @@ async function decodeFallback(){
     const ab=await item.file.arrayBuffer();
     const buf=await new Promise((res,rej)=>{ const pr=ac.decodeAudioData(ab,res,rej); if(pr&&pr.catch) pr.catch(rej); });
     if(kind!=='file'||playlist[trackIdx]!==item) return;
-    dec={buf:buf,src:null,offset:0,startedAt:0,playing:false}; say(''); decPlay();
+    dec={buf:buf,src:null,offset:0,startedAt:0,playing:false}; if($('msg').textContent.indexOf('That file')===0) say(''); decPlay();
   }catch(e){ if(kind==='file'&&playlist[trackIdx]===item) fail(); }
 }
 const trackTime=()=>dec?dec.offset+(dec.playing?ac.currentTime-dec.startedAt:0):audio.currentTime;
@@ -633,7 +633,7 @@ function playTrack(i){
   });
 }
 audio.addEventListener('ended',()=>{ if(kind==='file'&&!dec) playTrack(trackIdx+1); });
-audio.addEventListener('play',()=>{ if(kind==='file'){ $('bPlay').textContent='Pause'; say(''); } spin(); });
+audio.addEventListener('play',()=>{ if(kind==='file'){ $('bPlay').textContent='Pause'; if($('msg').textContent.indexOf('Tap Play')===0) say(''); } spin(); });
 audio.addEventListener('pause',()=>{ if(kind==='file'&&!dec) $('bPlay').textContent='Play'; spin(); });
 audio.addEventListener('error',()=>{ if(kind==='file'&&!dec&&audio.src&&audio.src!==silentSrc) decodeFallback(); });
 
@@ -652,6 +652,7 @@ async function useMic(){
   if(!(navigator.mediaDevices&&navigator.mediaDevices.getUserMedia)) return say('The microphone'+BLOCKED);
   try{
     ensureCtx();
+    say('Waiting for permission to use the microphone. Answer the prompt from your browser.');
     const want=id=>{ const c=Object.assign({channelCount:{ideal:2}},RAW); if(id) c.deviceId={exact:id}; return {audio:c}; };
     let s;
     try{ s=await navigator.mediaDevices.getUserMedia(want(micDevId)); }
@@ -670,7 +671,7 @@ async function useMic(){
     if(mt){
       mt.addEventListener('mute',()=>{ if(stream===s) setNow('Microphone paused by another app - it resumes when that app stops playing'); });
       mt.addEventListener('unmute',()=>{ if(stream===s){ setNow(LISTEN); recover(); } });
-      mt.addEventListener('ended',()=>{ if(stream===s) goIdle('Microphone was stopped by the phone - tap Mic to start again'); });
+      mt.addEventListener('ended',()=>{ if(stream===s) goIdle('The microphone was stopped by this device - tap Mic to start again'); });
     }
     listInputs();
   }catch(e){ say('The microphone'+BLOCKED); }
@@ -679,6 +680,7 @@ async function useTab(){
   if(!(navigator.mediaDevices&&navigator.mediaDevices.getDisplayMedia)) return say('Tab audio'+BLOCKED);
   try{
     ensureCtx();
+    say('Choose the tab to share in the prompt from your browser, and switch on its audio.');
     const s=await navigator.mediaDevices.getDisplayMedia({video:true,audio:RAW});
     if(!s.getAudioTracks().length){
       s.getTracks().forEach(t=>t.stop());
@@ -1060,8 +1062,10 @@ function mXY(){
     const d=24, n=wave.length-d;
     for(let i=0;i<n;i+=2){ const x=W/2+(wave[i]-128)/128*m, y=H/2-(wave[i+d]-128)/128*m; i?g.lineTo(x,y):g.moveTo(x,y); }
   }
-  g.lineJoin='round'; g.shadowColor=col(0.1,1); g.shadowBlur=12*U;
+  g.lineJoin='round'; g.lineCap='round'; g.shadowColor=col(0.1,1); g.shadowBlur=12*U;
   g.strokeStyle=col(0.1,0.9); g.lineWidth=1.6*U; g.stroke(); g.shadowBlur=0;
+  g.fillStyle=col(0.1,0.9); g.beginPath(); g.arc(W/2+(stereo?(waveL[0]-128)/128*m:(wave[0]-128)/128*m),H/2-(stereo?(waveR[0]-128)/128*m:(wave[24]-128)/128*m),1.4*U,0,TAU); g.fill();
+  g.lineCap='butt';
 }
 const GENERIC=[['Scope',mScope],['X-Y',mXY],['Bars',mBars],['Radial',mRadial],['Ribbons',mRibbons],['Particles',mParticles],['Tunnel',mTunnel],['Kaleidoscope',mKaleido],['Terrain',mTerrain],['Orbs',mOrbs]];
 let MODES=GENERIC.slice();
@@ -1384,8 +1388,8 @@ function mVU(){
 const ARM={D:Math.hypot(1.3,0.62),L:Math.hypot(1.3,0.62)*1.045,rest:1.2};   /* pivot-to-spindle and pivot-to-stylus distances, in platter radii */
 function armPhiFor(r){ return Math.acos(Math.max(-1,Math.min(1,(ARM.D*ARM.D+ARM.L*ARM.L-r*r)/(2*ARM.D*ARM.L)))); }
 function deck(){
-  const panel=H>W*1.15?Math.min(H*0.07,W*0.13):0, R=Math.min(W*0.348,(H-panel)*0.455);
-  const cx=(W-2.72*R)/2+1.07*R, cy=(H-panel)/2;
+  const panel=H>W*1.15?Math.min(H*0.07,W*0.13):0, R=Math.min(W*0.385,(H-panel)*0.455);
+  const cx=2.72*R<=W?(W-2.72*R)/2+1.07*R:W*0.035+1.07*R, cy=(H-panel)/2;
   return {cx:cx,cy:cy,R:R,Rr:R*0.92,panel:panel,rot:performance.now()/1800*TAU,px:cx+1.3*R,py:cy-0.62*R};
 }
 function deckStatic(d){
