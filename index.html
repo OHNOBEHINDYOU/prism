@@ -39,7 +39,7 @@ header{flex:none;display:grid;grid-template-columns:1fr auto;gap:8px 12px;align-
 .brand{display:flex;flex-direction:column;gap:5px;min-width:0}
 h1{font:400 19px/1 var(--label);letter-spacing:.34em;text-transform:uppercase;margin:0;color:var(--alu-hi)}
 .brand span{font-size:7.5px;letter-spacing:.22em;text-transform:uppercase;color:var(--alu-lo)}
-.disc{width:46px;height:46px;border-radius:50%;outline:3px dotted #8e9295;outline-offset:2px;margin:5px;
+.disc{cursor:pointer;-webkit-tap-highlight-color:transparent;width:46px;height:46px;border-radius:50%;outline:3px dotted #8e9295;outline-offset:2px;margin:5px;
   background:
     radial-gradient(circle,#d9dadb 0 5%,#d9522b 6% 31%,#0c0c0c 32% 34%,transparent 35%),
     repeating-radial-gradient(circle,rgba(255,255,255,.08) 0 1px,transparent 1px 3px),
@@ -152,7 +152,7 @@ body.quiet #screen{margin:0!important;border-radius:0!important;box-shadow:none!
     <h1>Prism</h1>
     <span>Direct drive audio visualiser</span>
   </div>
-  <div class="disc" aria-hidden="true"></div>
+  <div class="disc" id="disc" aria-hidden="true"></div>
   <p class="readout"><span id="now">Pick a sound source below to begin</span><span id="bpm"></span></p>
 </header>
 <div id="screen">
@@ -2475,19 +2475,12 @@ $('picFile').onchange=e=>{ const f=e.target.files[0]; e.target.value=''; if(f) l
 $('bPicReset').onclick=()=>{ pic=null; picOwn=false; try{ localStorage.removeItem('prism-pic'); }catch(e){} modeUi(); };
 try{ const sp=localStorage.getItem('prism-pic'); if(sp) loadPicture(sp,false); }catch(e){}
 
-/* ---------- hidden extra: up, up, down, down, left, right, enter turns the ferrofluid rainbow ---------- */
-{
-  const CODE=['ArrowUp','ArrowUp','ArrowDown','ArrowDown','ArrowLeft','ArrowRight','Enter']; let at=0;
-  addEventListener('keydown',e=>{
-    if(e.repeat) return;
-    at=e.key===CODE[at]?at+1:(e.key===CODE[0]?(at===2?2:1):0);
-    if(at<CODE.length) return;
-    at=0; e.preventDefault(); e.stopImmediatePropagation();
-    ferroRainbow=!ferroRainbow;
-    const i=MODES.findIndex(m=>m[0]==='Ferrofluid'); if(i>=0) setMode(i);
-    say(ferroRainbow?'Rainbow ferrofluid unlocked. Enter the code again to switch it off.':'Rainbow ferrofluid off.');
-  },true);
-}
+/* ---------- hidden extra: pressing the little record in the header turns the ferrofluid rainbow ---------- */
+$('disc').addEventListener('click',()=>{
+  ferroRainbow=!ferroRainbow;
+  const i=MODES.findIndex(m=>m[0]==='Ferrofluid'); if(i>=0) setMode(i);
+  say(ferroRainbow?'Rainbow ferrofluid on. Press the record again to switch it off.':'Rainbow ferrofluid off.');
+});
 
 /* ---------- collapsible menu ---------- */
 let folds={};
