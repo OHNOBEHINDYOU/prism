@@ -1256,7 +1256,7 @@ function mDisc(t){
    towards a wandering magnet by the bass, thrown apart on each beat, and melt into one another where
    they touch. Every pixel is lit as a rounded, glossy surface so the mass reads as solid. */
 const FB=[], FBX=new Float32Array(16), FBY=new Float32Array(16), FBR=new Float32Array(16);
-let ferroC=null, ferroX=null, ferroI=null, ferroN=0, ferroT=0, ferroBeat=-1;
+let ferroC=null, ferroX=null, ferroI=null, ferroN=0, ferroT=0, ferroBeat=-1, ferroRainbow=false;
 function ferroStep(t){
   if(!FB.length){
     const rs=[0.26,0.22,0.19,0.165,0.105,0.095,0.085,0.076,0.068,0.06,0.054,0.05,0.045,0.041,0.038,0.035];
@@ -1299,7 +1299,7 @@ function mFerro(t){
   ferroStep(t);
   const m=Math.min(W,H), cx=W/2, cy=H/2, R=m*0.46, N=Math.max(96,Math.min(200,Math.round(R*2/3))), nb=FB.length;
   if(N!==ferroN){ ferroN=N; ferroC=document.createElement('canvas'); ferroC.width=ferroC.height=N; ferroX=ferroC.getContext('2d'); ferroI=ferroX.createImageData(N,N); }
-  const d=ferroI.data, white=MONO; let o=0;
+  const d=ferroI.data, white=MONO, rb=ferroRainbow&&!MONO, hue0=t*0.00022+beatCount*0.07, glow=0.5+0.5*Math.min(1,bass*0.8+beat*0.6); let o=0;
   for(let j=0;j<N;j++){
     const y=(j+0.5)/N*2-1;
     for(let i=0;i<N;i++,o+=4){
@@ -1316,6 +1316,12 @@ function mFerro(t){
       let v=7+(d1>0?d1*d1*d1*70:0)+e*e*e*150;
       if(d1>0.86){ const h=(d1-0.86)/0.14; v+=h*h*255; }
       if(d2>0.93){ const h=(d2-0.93)/0.07; v+=h*h*105; }
+      if(rb){
+        /* hidden rainbow version: bands of colour flow across the surface and brighten on the beat */
+        const hh=(hue0+(x+y)*0.42+f*0.16+nx*0.12)*TAU, lit=(0.3+0.7*nz)*glow+e*e*0.5, sp=v>90?v-90:0;
+        const r=(127+127*Math.cos(hh))*lit+sp, gg=(127+127*Math.cos(hh-2.094))*lit+sp, bb=(127+127*Math.cos(hh-4.189))*lit+sp;
+        d[o]=r>255?255:r; d[o+1]=gg>255?255:gg; d[o+2]=bb>255?255:bb; continue;
+      }
       if(v>255) v=255;
       d[o]=v*0.95; d[o+1]=v*0.97; d[o+2]=v>251?255:v+4;
     }
@@ -1323,17 +1329,21 @@ function mFerro(t){
   ferroX.putImageData(ferroI,0,0);
   g.save();
   g.beginPath(); g.arc(cx,cy,R,0,TAU);
-  if(!MONO&&!WIRE){                              /* the lit window behind the fluid, tinted by the trace colour */
+  if(rb&&!WIRE){                                 /* rainbow version: a dark window so the colours glow */
+    const gr=g.createRadialGradient(cx,cy,R*0.1,cx,cy,R);
+    gr.addColorStop(0,'hsla('+((hue0*360+180)%360|0)+',80%,'+(10+14*glow|0)+'%,1)'); gr.addColorStop(1,'rgba(4,4,10,1)');
+    g.fillStyle=gr; g.fill();
+  }else if(!MONO&&!WIRE){                        /* the lit window behind the fluid, tinted by the trace colour */
     g.fillStyle=col(0.55,1); g.fill();
     const gr=g.createRadialGradient(cx,cy-R*0.12,R*0.05,cx,cy,R);
     gr.addColorStop(0,'rgba(255,255,255,'+Math.min(1,0.84+0.16*level+0.1*beat).toFixed(3)+')'); gr.addColorStop(0.65,'rgba(255,255,255,.62)'); gr.addColorStop(1,'rgba(255,255,255,.1)');
     g.fillStyle=gr; g.fill();
   }
   g.clip(); g.imageSmoothingEnabled=true; g.imageSmoothingQuality='high';
-  if(!MONO&&!WIRE){ g.globalAlpha=0.2; g.drawImage(ferroC,cx-R+R*0.035,cy-R+R*0.05,R*2,R*2); g.globalAlpha=1; }   /* soft shadow on the glass */
+  if(!MONO&&!WIRE&&!rb){ g.globalAlpha=0.2; g.drawImage(ferroC,cx-R+R*0.035,cy-R+R*0.05,R*2,R*2); g.globalAlpha=1; }   /* soft shadow on the glass */
   g.drawImage(ferroC,cx-R,cy-R,R*2,R*2);
   g.restore();
-  g.beginPath(); g.arc(cx,cy,R,0,TAU); g.strokeStyle=col(0.55,0.9); g.lineWidth=2*U; g.stroke();
+  g.beginPath(); g.arc(cx,cy,R,0,TAU); g.strokeStyle=rb?'hsl('+((hue0*360)%360|0)+',95%,60%)':col(0.55,0.9); g.lineWidth=(rb?2+3*glow:2)*U; g.stroke();
 }
 
 /* ---------- picture modes: your own image, bent by the music ---------- */
@@ -2439,6 +2449,20 @@ $('bPic').onclick=()=>$('picFile').click();
 $('picFile').onchange=e=>{ const f=e.target.files[0]; e.target.value=''; if(f) loadPicture(URL.createObjectURL(f),true); };
 $('bPicReset').onclick=()=>{ pic=null; picOwn=false; try{ localStorage.removeItem('prism-pic'); }catch(e){} modeUi(); };
 try{ const sp=localStorage.getItem('prism-pic'); if(sp) loadPicture(sp,false); }catch(e){}
+
+/* ---------- hidden extra: up, up, down, down, left, right, enter turns the ferrofluid rainbow ---------- */
+{
+  const CODE=['ArrowUp','ArrowUp','ArrowDown','ArrowDown','ArrowLeft','ArrowRight','Enter']; let at=0;
+  addEventListener('keydown',e=>{
+    if(e.repeat) return;
+    at=e.key===CODE[at]?at+1:(e.key===CODE[0]?(at===2?2:1):0);
+    if(at<CODE.length) return;
+    at=0; e.preventDefault(); e.stopImmediatePropagation();
+    ferroRainbow=!ferroRainbow;
+    const i=MODES.findIndex(m=>m[0]==='Ferrofluid'); if(i>=0) setMode(i);
+    say(ferroRainbow?'Rainbow ferrofluid unlocked. Enter the code again to switch it off.':'Rainbow ferrofluid off.');
+  },true);
+}
 
 /* ---------- collapsible menu ---------- */
 let folds={};
