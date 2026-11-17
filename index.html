@@ -121,7 +121,7 @@ body[data-style="vfd"] #screen{border-radius:7px;background:#020807;box-shadow:0
 body[data-style="vfd"] #grat{background:repeating-linear-gradient(90deg,rgba(0,0,0,.3) 0 1px,transparent 1px 3px)}
 body[data-style="vfd"] #grat::after{box-shadow:inset 0 0 30px 6px rgba(0,0,0,.8)}
 body[data-style="led"] #screen{border-radius:4px;background:#060303;box-shadow:0 0 0 2px #000,0 0 0 7px #232526,0 0 0 8px #4c4f52}
-body[data-style="vinyl"] #screen{border-radius:10px;background:#c9cccd;box-shadow:0 0 0 1px #6f7376,0 4px 12px rgba(0,0,0,.55)}
+body[data-style="vinyl"] #screen{border-radius:12px;background:#c9cccd;box-shadow:0 0 0 1px #f4f5f5,0 0 0 3px #6f7376,0 6px 16px rgba(0,0,0,.6)}
 body[data-style="console"] #screen{border-radius:30px;background:#000;box-shadow:0 0 0 3px #050505,0 0 0 13px #3a3b3d,0 0 0 14px #62656a}
 body[data-style="console"] #grat{background:repeating-linear-gradient(0deg,rgba(0,0,0,.3) 0 1px,transparent 1px 3px)}
 body[data-style="print"] #screen{border-radius:2px;background:#f1ead9;box-shadow:0 3px 14px rgba(0,0,0,.6)}
@@ -1591,25 +1591,112 @@ function mVU(){
     const y=(H-mh)/2; drawMeter(W/2-pad/2-mw,y,mw,mh,vu[0],stereo?'LEFT':'LOW'); drawMeter(W/2+pad/2,y,mw,mh,vu[1],stereo?'RIGHT':'HIGH'); }
 }
 
-/* vinyl: a record on a platter with a linear-tracking arm */
-function deck(){ const R=Math.min(W*0.43,H*0.46); return {cx:W/2-R*0.07,cy:H/2,R:R,Rr:R*0.93,rot:performance.now()/1800*TAU}; }
-function drawPlinth(d){
-  const lg=G.createLinearGradient(0,0,0,H); lg.addColorStop(0,'#e1e3e4'); lg.addColorStop(1,'#b3b7b9');
-  G.globalCompositeOperation='source-over'; G.fillStyle=lg; FR.call(G,0,0,W,H);
-  G.shadowColor='rgba(0,0,0,.45)'; G.shadowBlur=18*U; G.shadowOffsetY=5*U;
-  G.fillStyle='#17181a'; circ(G,d.cx,d.cy,d.R); G.fill();
-  G.shadowBlur=0; G.shadowOffsetY=0;
-  G.fillStyle='#9a9ea1';
-  for(let i=0;i<72;i++){ const a=d.rot+i/72*TAU; circ(G,d.cx+Math.cos(a)*d.R*0.966,d.cy+Math.sin(a)*d.R*0.966,d.R*0.009); G.fill(); }
+/* vinyl: a detailed deck seen from above - brushed plinth, strobe platter, a record whose grooves ripple out from the stylus, and a linear-tracking arm that cues, tracks and shivers with the music */
+function deck(){
+  const panel=H>W*1.15?Math.min(H*0.15,W*0.3):0, R=Math.min(W*0.435,(H-panel)*0.455);
+  return {cx:W/2-R*0.05,cy:(H-panel)/2,R:R,Rr:R*0.92,panel:panel,rot:performance.now()/1800*TAU};
 }
+function deckStatic(d){
+  const B=buf('deck',W,H), key=[W,H,Math.round(d.R),Math.round(d.panel)].join();
+  if(B.key===key) return B;
+  B.key=key;
+  const x=B.x, cx=d.cx, cy=d.cy, R=d.R;
+  /* brushed aluminium */
+  const lg=x.createLinearGradient(0,0,W,H); lg.addColorStop(0,'#e9ebec'); lg.addColorStop(0.5,'#c9cdcf'); lg.addColorStop(1,'#aeb3b6');
+  x.fillStyle=lg; x.fillRect(0,0,W,H);
+  let seed=7; const rnd=()=>(seed=(seed*16807)%2147483647)/2147483647;
+  for(let y=0;y<H;y+=Math.max(1,U)){ x.fillStyle='rgba('+(rnd()>0.5?'255,255,255':'0,0,0')+','+(0.02+rnd()*0.055)+')'; x.fillRect(0,y,W,Math.max(1,U)); }
+  const hl=x.createRadialGradient(W*0.2,H*0.12,0,W*0.2,H*0.12,Math.max(W,H)*0.8); hl.addColorStop(0,'rgba(255,255,255,.28)'); hl.addColorStop(1,'rgba(0,0,0,.22)');
+  x.fillStyle=hl; x.fillRect(0,0,W,H);
+  /* bevelled edge */
+  x.strokeStyle='rgba(255,255,255,.7)'; x.lineWidth=2*U; x.strokeRect(3*U,3*U,W-6*U,H-6*U);
+  x.strokeStyle='rgba(0,0,0,.35)'; x.lineWidth=U; x.strokeRect(6*U,6*U,W-12*U,H-12*U);
+  /* engraved lettering */
+  x.textBaseline='middle'; x.textAlign='left';
+  const top=cy-R*1.08, fz=Math.max(7*U,Math.min(R*0.085,top*0.3));
+  if(top>fz*2.4){
+    x.font=fz+'px '+LABEL; x.fillStyle='rgba(255,255,255,.6)'; x.fillText('P R I S M',14*U+U,top*0.42+U);
+    x.fillStyle='#34383b'; x.fillText('P R I S M',14*U,top*0.42);
+    x.font=(fz*0.34)+'px '+LABEL; x.fillStyle='#4a4f52'; x.fillText('DIRECT DRIVE  -  LINEAR TRACKING  -  33 RPM',14*U,top*0.42+fz*0.95);
+  }
+  /* platter well */
+  x.shadowColor='rgba(0,0,0,.55)'; x.shadowBlur=22*U; x.shadowOffsetY=6*U;
+  x.fillStyle='#0d0e0f'; circ(x,cx,cy,R*1.07); x.fill();
+  x.shadowBlur=0; x.shadowOffsetY=0;
+  x.strokeStyle='rgba(255,255,255,.55)'; x.lineWidth=1.5*U; circ(x,cx,cy,R*1.075); x.stroke();
+  const pg=x.createRadialGradient(cx,cy,R*0.9,cx,cy,R*1.06); pg.addColorStop(0,'#2a2c2e'); pg.addColorStop(0.55,'#5d6164'); pg.addColorStop(1,'#1b1c1e');
+  x.fillStyle=pg; circ(x,cx,cy,R*1.05); x.fill();
+  /* arm base block, right of the platter */
+  const bx=cx+R*1.1, bw=Math.min(W-bx-6*U,R*0.2), bh=R*0.34;
+  if(bw>6*U){
+    x.shadowColor='rgba(0,0,0,.45)'; x.shadowBlur=10*U; x.shadowOffsetY=4*U;
+    const bg=x.createLinearGradient(bx,0,bx+bw,0); bg.addColorStop(0,'#2b2d2f'); bg.addColorStop(1,'#17181a');
+    x.fillStyle=bg; rrect(x,bx,cy-bh/2,bw,bh,bw*0.18); x.fill();
+    x.shadowBlur=0; x.shadowOffsetY=0;
+    x.strokeStyle='rgba(255,255,255,.18)'; x.lineWidth=U; rrect(x,bx+U,cy-bh/2+U,bw-2*U,bh-2*U,bw*0.16); x.stroke();
+  }
+  /* front control strip */
+  if(d.panel){
+    const py=H-d.panel, ph=d.panel;
+    const sg=x.createLinearGradient(0,py,0,H); sg.addColorStop(0,'#1d1f21'); sg.addColorStop(1,'#111213');
+    x.fillStyle=sg; x.fillRect(0,py,W,ph);
+    x.fillStyle='rgba(255,255,255,.35)'; x.fillRect(0,py,W,U);
+    const kw=W*0.15, kh=ph*0.3, ky=py+ph*0.2, names=['START','STOP','CUE','REPEAT'];
+    x.textAlign='center'; x.font=Math.max(5*U,kh*0.3)+'px '+LABEL;
+    names.forEach((nm,i)=>{
+      const kx=W*0.05+i*(kw+W*0.02);
+      const kg=x.createLinearGradient(0,ky,0,ky+kh); kg.addColorStop(0,'#f1f2f3'); kg.addColorStop(1,'#b9bdc0');
+      x.fillStyle=kg; rrect(x,kx,ky,kw,kh,3*U); x.fill();
+      x.fillStyle='#2a2d2f'; x.fillText(nm,kx+kw/2,ky+kh*0.55);
+    });
+    x.textAlign='left'; x.fillStyle='#8d9194'; x.font=Math.max(5*U,ph*0.085)+'px '+LABEL;
+    x.fillText('LEVEL',W*0.05,py+ph*0.74); x.textAlign='right'; x.fillText('33     45',W*0.95,py+ph*0.36);
+  }
+  return B;
+}
+/* the record surface: fine grooves, track gaps and the shiny edge. Drawn once per size. */
+function recordStatic(Rr){
+  const S=Math.ceil(Rr*2)+4, B=buf('rec',S,S), key=String(S);
+  if(B.key===key) return B;
+  B.key=key;
+  const x=B.x, c=S/2;
+  x.clearRect(0,0,S,S);
+  const rg=x.createRadialGradient(c,c,Rr*0.3,c,c,Rr); rg.addColorStop(0,'#141415'); rg.addColorStop(0.6,'#0a0a0b'); rg.addColorStop(1,'#151517');
+  x.fillStyle=rg; circ(x,c,c,Rr); x.fill();
+  x.lineWidth=Math.max(0.6,U*0.6);
+  for(let r=Rr*0.385;r<Rr*0.965;r+=Math.max(1.6,U*1.7)){ x.strokeStyle='rgba(255,255,255,'+(0.035+0.035*Math.abs(Math.sin(r*0.37)))+')'; circ(x,c,c,r); x.stroke(); }
+  [0.52,0.66,0.81].forEach(f=>{ x.strokeStyle='#050506'; x.lineWidth=Rr*0.012; circ(x,c,c,Rr*f); x.stroke(); });
+  x.strokeStyle='rgba(255,255,255,.16)'; x.lineWidth=U; circ(x,c,c,Rr*0.992); x.stroke();
+  x.strokeStyle='rgba(255,255,255,.08)'; circ(x,c,c,Rr*0.375); x.stroke();
+  return B;
+}
+function drawPlinth(d){
+  G.globalCompositeOperation='copy'; G.drawImage(deckStatic(d).c,0,0); G.globalCompositeOperation='source-over';
+  const cx=d.cx, cy=d.cy, R=d.R;
+  /* strobe dots on the platter rim, lit by a small red lamp */
+  for(let row=0;row<2;row++){
+    const n=row?96:72, rr=R*(row?1.035:1.015);
+    G.fillStyle=row?'#8f9396':'#c4c8ca';
+    for(let i=0;i<n;i++){ const a=d.rot+i/n*TAU; FR.call(G,cx+Math.cos(a)*rr-U,cy+Math.sin(a)*rr-U,2*U,2*U); }
+  }
+  const lx=cx-R*0.74, ly=cy+R*0.76, lamp=G.createRadialGradient(lx,ly,0,lx,ly,R*0.2);
+  lamp.addColorStop(0,'rgba(255,70,40,'+(0.55+0.35*beat)+')'); lamp.addColorStop(1,'rgba(255,70,40,0)');
+  G.fillStyle=lamp; circ(G,lx,ly,R*0.2); G.fill();
+  G.fillStyle='#ff5a3c'; circ(G,lx-R*0.06,ly+R*0.06,R*0.018); G.fill();
+  /* rubber mat under the record */
+  G.fillStyle='#141516'; circ(G,cx,cy,R*0.985); G.fill();
+}
+let armPos=1.2, armLift=1, armWob=0;
 function drawRecordTop(d){
   const cx=d.cx, cy=d.cy, Rr=d.Rr, R=d.R;
+  /* light catching the grooves: two opposite soft wedges that stay still while the record turns */
   if(G.createConicGradient){
-    const cg=G.createConicGradient(-0.7,cx,cy);
-    [[0,0],[0.05,0.16],[0.1,0],[0.5,0],[0.55,0.16],[0.6,0],[1,0]].forEach(s=>cg.addColorStop(s[0],'rgba(255,255,255,'+s[1]+')'));
-    G.fillStyle=cg; circ(G,cx,cy,Rr); G.fill();
+    const cg=G.createConicGradient(-0.75,cx,cy);
+    [[0,0],[0.03,0.07],[0.06,0.2],[0.09,0.07],[0.12,0],[0.5,0],[0.53,0.07],[0.56,0.2],[0.59,0.07],[0.62,0],[1,0]].forEach(s=>cg.addColorStop(s[0],'rgba(255,255,255,'+s[1]+')'));
+    G.fillStyle=cg; circ(G,cx,cy,Rr*0.99); G.fill();
   }
-  const lr=Rr*0.34, lc=stops?stops[0]:[217,82,43];
+  /* label */
+  const lr=Rr*0.34, lc=stops?stops[0]:[217,82,43], lc2=stops?stops[2%stops.length]:[40,40,44];
   const cover=kind==='file'&&playlist[trackIdx]?playlist[trackIdx].img:null;
   G.save(); G.translate(cx,cy); G.rotate(d.rot);
   if(cover&&cover.width&&cover.height){
@@ -1617,45 +1704,98 @@ function drawRecordTop(d){
     G.save(); circ(G,0,0,lr); G.clip();
     G.drawImage(cover,(cover.width-sq)/2,(cover.height-sq)/2,sq,sq,-lr,-lr,lr*2,lr*2);
     G.restore();
-    G.strokeStyle='rgba(0,0,0,.5)'; G.lineWidth=2*U; circ(G,0,0,lr); G.stroke();
   }else{
     G.fillStyle='rgb('+lc[0]+','+lc[1]+','+lc[2]+')'; circ(G,0,0,lr); G.fill();
-    G.strokeStyle='rgba(0,0,0,.35)'; G.lineWidth=U; circ(G,0,0,lr*0.93); G.stroke();
-    G.fillStyle='rgba(0,0,0,.8)'; G.textAlign='center'; G.textBaseline='middle';
-    G.font=(lr*0.24)+'px '+LABEL; G.fillText('PRISM',0,-lr*0.46);
-    G.font=(lr*0.1)+'px '+LABEL; G.fillText('SIDE A  -  33 RPM',0,lr*0.5);
+    G.fillStyle='rgba('+lc2[0]+','+lc2[1]+','+lc2[2]+',.55)'; G.beginPath(); G.arc(0,0,lr,Math.PI*0.08,Math.PI*0.92); G.closePath(); G.fill();
+    G.strokeStyle='rgba(0,0,0,.4)'; G.lineWidth=U; circ(G,0,0,lr*0.93); G.stroke(); circ(G,0,0,lr*0.6); G.stroke();
+    G.fillStyle='rgba(0,0,0,.82)'; G.textAlign='center'; G.textBaseline='middle';
+    G.font=(lr*0.25)+'px '+LABEL; G.fillText('PRISM',0,-lr*0.42);
+    G.font=(lr*0.085)+'px '+LABEL; G.fillText('STEREO  -  33 RPM',0,-lr*0.16);
+    G.fillStyle='rgba(255,255,255,.85)'; G.fillText('SIDE A',0,lr*0.5);
   }
+  G.strokeStyle='rgba(0,0,0,.55)'; G.lineWidth=2*U; circ(G,0,0,lr); G.stroke();
   G.restore();
-  G.fillStyle='#d3d6d8'; circ(G,cx,cy,Rr*0.035); G.fill();
-  const p=kind==='file'&&isFinite(trackDur())&&trackDur()>0?Math.min(1,trackTime()/trackDur()):(performance.now()%180000)/180000, rp=Rr*(0.95-p*0.55);
-  const x0=cx+Rr*0.37, x1=cx+R*1.1, bh=R*0.1;
-  G.shadowColor='rgba(0,0,0,.5)'; G.shadowBlur=10*U; G.shadowOffsetY=4*U;
-  G.fillStyle='rgba(34,36,38,.86)'; rrect(G,x0,cy-bh/2,x1-x0,bh,bh*0.2); G.fill();
-  G.shadowBlur=0; G.shadowOffsetY=0;
-  G.fillStyle='rgba(255,255,255,.14)'; FR.call(G,x0+bh*0.3,cy-bh*0.36,x1-x0-bh*0.6,U);
-  const cwid=R*0.075;
-  G.fillStyle='#c9cccd'; rrect(G,cx+rp-cwid/2,cy-bh*0.85,cwid,bh*1.7,bh*0.12); G.fill();
-  G.fillStyle='#d9522b'; FR.call(G,cx+rp-U,cy-bh*0.85,2*U,bh*1.7);
+  const sp=G.createRadialGradient(cx-Rr*0.01,cy-Rr*0.01,0,cx,cy,Rr*0.04); sp.addColorStop(0,'#ffffff'); sp.addColorStop(1,'#8d9194');
+  G.fillStyle=sp; circ(G,cx,cy,Rr*0.036); G.fill();
+
+  /* linear-tracking arm: it rests off the record, travels in and lowers when music plays, then tracks inward and shivers with the sound */
+  const playing=live&&!(kind==='file'&&trackPaused());
+  const prog=kind==='file'&&isFinite(trackDur())&&trackDur()>0?Math.min(1,trackTime()/trackDur()):(performance.now()%200000)/200000;
+  const target=playing?0.95-prog*0.55:1.2;
+  armPos+=(target-armPos)*0.045;
+  armLift+=((playing&&Math.abs(target-armPos)<0.04?0:1)-armLift)*0.08;
+  armWob+=(((waveL[8]-128)/128*gain)-armWob)*0.5;
+  const down=1-armLift, sx=cx+Rr*armPos+armWob*Rr*0.012*down, bounce=beat*Rr*0.012*down;
+  const x0=cx+Rr*0.3, x1=cx+R*1.14, th=R*0.05, sh=(4+10*armLift)*U;
+  /* shadow on the record */
+  G.fillStyle='rgba(0,0,0,.35)'; rrect(G,x0+sh,cy-th/2+sh,x1-x0,th,th*0.4); G.fill();
+  /* twin chrome rails */
+  for(const off of [-th*0.34,th*0.34]){
+    const rg=G.createLinearGradient(0,cy+off-th*0.13,0,cy+off+th*0.13); rg.addColorStop(0,'#fdfdfd'); rg.addColorStop(0.5,'#9fa4a7'); rg.addColorStop(1,'#565a5d');
+    G.fillStyle=rg; rrect(G,x0,cy+off-th*0.13,x1-x0,th*0.26,th*0.13); G.fill();
+  }
+  G.fillStyle='#232527'; rrect(G,x0-th*0.2,cy-th*0.75,th*0.5,th*1.5,th*0.15); G.fill();
+  /* carriage, headshell and cartridge */
+  const cw=R*0.12, ch=R*0.2, cyc=cy-bounce;
+  G.shadowColor='rgba(0,0,0,.5)'; G.shadowBlur=(6+10*armLift)*U; G.shadowOffsetX=sh*0.6; G.shadowOffsetY=sh;
+  const cg2=G.createLinearGradient(sx-cw/2,0,sx+cw/2,0); cg2.addColorStop(0,'#e4e6e7'); cg2.addColorStop(0.5,'#f7f8f8'); cg2.addColorStop(1,'#a9adb0');
+  G.fillStyle=cg2; rrect(G,sx-cw/2,cyc-ch/2,cw,ch,cw*0.12); G.fill();
+  G.shadowBlur=0; G.shadowOffsetX=0; G.shadowOffsetY=0;
+  G.fillStyle='#1b1c1e'; rrect(G,sx-cw*0.36,cyc-ch*0.36,cw*0.72,ch*0.34,cw*0.06); G.fill();
+  G.fillStyle='#2a2c2e'; rrect(G,sx-cw*0.22,cyc+ch*0.5,cw*0.44,ch*0.42,cw*0.05); G.fill();      /* cartridge */
+  G.fillStyle='#d9522b'; FR.call(G,sx-cw*0.22,cyc+ch*0.62,cw*0.44,ch*0.07);
+  G.strokeStyle='#e9eaeb'; G.lineWidth=1.5*U; G.beginPath(); G.moveTo(sx,cyc+ch*0.92); G.lineTo(sx,cyc+ch*1.02); G.stroke();   /* cantilever */
+  /* tracking lamp on the carriage blinks with the beat; the stylus tip glints when it is in the groove */
+  G.fillStyle=playing?'rgba(255,90,60,'+(0.45+0.55*beat)+')':'#4a1511'; circ(G,sx+cw*0.26,cyc-ch*0.2,cw*0.07); G.fill();
+  if(down>0.5){ G.fillStyle='rgba(255,255,255,'+(0.5+0.5*beat)+')'; circ(G,sx,cyc+ch*1.03,(1.5+2.5*beat)*U); G.fill(); }
+  d.stylus=down>0.5?armPos:null;
+
+  /* front strip: lamps that follow the music */
+  if(d.panel){
+    const py=H-d.panel, ph=d.panel, n=24, x0l=W*0.05+W*0.14, wl=W*0.76, sw=wl/n, lit=Math.round(level*n);
+    for(let i=0;i<n;i++){
+      const red=i>=n-5; G.fillStyle=i<lit?(red?'#ff5a3c':'#7dffa0'):(red?'#3a1410':'#16301f');
+      FR.call(G,x0l+i*sw+sw*0.15,py+ph*0.66,sw*0.7,ph*0.16);
+    }
+    G.fillStyle=playing?'#7dffa0':'#16301f'; circ(G,W*0.05+W*0.075,py+ph*0.13,ph*0.03); G.fill();
+    G.fillStyle='#ff5a3c'; circ(G,W*0.95-ph*0.42,py+ph*0.56,ph*0.035); G.fill();
+    G.fillStyle='#3a1410'; circ(G,W*0.95-ph*0.06,py+ph*0.56,ph*0.035); G.fill();
+  }
 }
 const grooveHist=[]; let grooveTick=0;
 function mGrooves(){
   const d=deck(); drawPlinth(d);
-  const cx=d.cx, cy=d.cy, Rr=d.Rr, N=40, P=72;
-  G.fillStyle='#09090a'; circ(G,cx,cy,Rr); G.fill();
+  const cx=d.cx, cy=d.cy, Rr=d.Rr, P=96;
+  const rec=recordStatic(Rr); G.drawImage(rec.c,cx-rec.c.width/2,cy-rec.c.height/2);
+  /* take a snapshot of the sound for each new ripple */
   if(++grooveTick%2===0){
-    const row=new Float32Array(P), step=Math.floor(wave.length/2/P);
-    for(let i=0;i<P;i++) row[i]=(wave[i*step]-128)/128*Math.sin(Math.PI*i/(P-1));
-    grooveHist.unshift(row); if(grooveHist.length>N) grooveHist.pop();
+    const row=new Float32Array(P+1), step=Math.floor(wave.length/2/P); let e=0;
+    for(let i=0;i<P;i++){ const v=(wave[i*step]-128)/128*Math.sin(Math.PI*i/(P-1)); row[i]=v; e+=v*v; }
+    row[P]=Math.min(1,Math.sqrt(e/P)*4*gain+beat*0.5);
+    grooveHist.unshift(row); if(grooveHist.length>30) grooveHist.pop();
   }
-  G.strokeStyle='rgba(255,255,255,.05)'; G.lineWidth=U;
-  for(let k=0;k<N;k+=2){ circ(G,cx,cy,Rr*(0.96-k/N*0.58)); G.stroke(); }
-  G.lineJoin='round';
-  for(let k=0;k<grooveHist.length;k++){
-    const row=grooveHist[k], f=k/N, r0=Rr*(0.96-f*0.58), amp=Rr*0.045*gain*(1-f*0.4);
-    G.beginPath();
-    for(let i=0;i<=P;i++){ const j=i%P, a=d.rot+j/P*TAU, r=r0+row[j]*amp; i?G.lineTo(cx+Math.cos(a)*r,cy+Math.sin(a)*r):G.moveTo(cx+Math.cos(a)*r,cy+Math.sin(a)*r); }
-    G.strokeStyle=col(f*0.8,0.35+0.65*(1-f)); G.lineWidth=(1+(1-f))*U*0.9; G.stroke();
+  /* ripples spread from the groove the stylus is in: outward over the music already played, and faintly inward */
+  const rp=Rr*Math.max(0.42,Math.min(0.95,armPos)), dr=Rr*0.027, b=bands(40);
+  G.save(); circ(G,cx,cy,Rr*0.97); G.clip();
+  G.globalCompositeOperation='lighter'; G.lineJoin='round';
+  for(let k=grooveHist.length-1;k>=0;k--){
+    const row=grooveHist[k], age=k/30, en=row[P];
+    for(const dir of [1,-1]){
+      const r0=rp+dir*k*dr; if(r0>Rr*0.97||r0<Rr*0.37||(dir<0&&k===0)) continue;
+      const amp=Rr*0.07*Math.min(2.2,gain)*(1-age*0.45);
+      G.beginPath();
+      for(let i=0;i<=P;i++){ const j=i%P, a=d.rot+j/P*TAU, r=r0+row[j]*amp; i?G.lineTo(cx+Math.cos(a)*r,cy+Math.sin(a)*r):G.moveTo(cx+Math.cos(a)*r,cy+Math.sin(a)*r); }
+      G.strokeStyle=col(age*0.75,Math.min(1,(0.4+0.8*en)*(1-age*0.6))); G.lineWidth=(1.2+2.6*(1-age)*(0.5+en))*U; G.stroke();
+    }
   }
+  /* a ring of frequency spokes around the label makes each hit easy to see */
+  const lr=Rr*0.34;
+  G.lineCap='round'; G.lineWidth=Math.max(1.5*U,TAU*lr/40*0.42);
+  for(let i=0;i<40;i++){
+    const a=d.rot+i/40*TAU, len=Rr*(0.008+0.11*b[i]); G.strokeStyle=col(i/40,0.9);
+    G.beginPath(); G.moveTo(cx+Math.cos(a)*lr*1.07,cy+Math.sin(a)*lr*1.07); G.lineTo(cx+Math.cos(a)*(lr*1.07+len),cy+Math.sin(a)*(lr*1.07+len)); G.stroke();
+  }
+  G.lineCap='butt'; G.globalCompositeOperation='source-over'; G.restore();
   drawRecordTop(d);
 }
 function discPost(t,fn){
@@ -1665,6 +1805,7 @@ function discPost(t,fn){
   G.drawImage(B.c,d.cx-d.Rr,d.cy-d.Rr);
   G.strokeStyle='rgba(0,0,0,.3)'; G.lineWidth=U;
   for(let r=d.Rr*0.38;r<d.Rr;r+=4*U){ circ(G,d.cx,d.cy,r); G.stroke(); }
+  G.strokeStyle='rgba(255,255,255,.16)'; circ(G,d.cx,d.cy,d.Rr*0.992); G.stroke();
   G.restore();
   drawRecordTop(d);
 }
