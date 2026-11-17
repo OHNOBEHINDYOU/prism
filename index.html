@@ -919,7 +919,7 @@ function col(t,a){
   const x=t*stops.length, i=Math.floor(x), f=x-i, A=stops[i%stops.length], B=stops[(i+1)%stops.length];
   return 'rgba('+(A[0]+(B[0]-A[0])*f|0)+','+(A[1]+(B[1]-A[1])*f|0)+','+(A[2]+(B[2]-A[2])*f|0)+','+a+')';
 }
-const FR=CanvasRenderingContext2D.prototype.fillRect;
+const FR=CanvasRenderingContext2D.prototype.fillRect, FILL=CanvasRenderingContext2D.prototype.fill;
 let BGC='3,10,6', BGH='rgb(3,10,6)', MONO=false, WIRE=false, barsN=0;
 function fade(a){ g.globalCompositeOperation='source-over'; g.fillStyle='rgba('+BGC+','+a+')'; FR.call(g,0,0,W,H); }
 function poly(x,y,r,sides,rot){
@@ -1256,7 +1256,7 @@ function mDisc(t){
    towards a wandering magnet by the bass, thrown apart on each beat, and melt into one another where
    they touch. Every pixel is lit as a rounded, glossy surface so the mass reads as solid. */
 const FB=[], FBX=new Float32Array(16), FBY=new Float32Array(16), FBR=new Float32Array(16);
-let ferroC=null, ferroX=null, ferroI=null, ferroN=0, ferroT=0, ferroBeat=-1, ferroRainbow=false;
+let ferroC=null, ferroX=null, ferroI=null, ferroN=0, ferroT=0, ferroBeat=-1, ferroRainbow=false, ferroF=null;
 function ferroStep(t){
   if(!FB.length){
     const rs=[0.26,0.22,0.19,0.165,0.105,0.095,0.085,0.076,0.068,0.06,0.054,0.05,0.045,0.041,0.038,0.035];
@@ -1298,20 +1298,21 @@ function mFerro(t){
   fade(0.55);
   ferroStep(t);
   const m=Math.min(W,H), cx=W/2, cy=H/2, R=m*0.46, N=Math.max(96,Math.min(200,Math.round(R*2/3))), nb=FB.length;
-  if(N!==ferroN){ ferroN=N; ferroC=document.createElement('canvas'); ferroC.width=ferroC.height=N; ferroX=ferroC.getContext('2d'); ferroI=ferroX.createImageData(N,N); }
-  const d=ferroI.data, white=MONO, rb=ferroRainbow&&!MONO, hue0=t*0.00022+beatCount*0.07, glow=0.5+0.5*Math.min(1,bass*0.8+beat*0.6); let o=0;
+  if(N!==ferroN){ ferroN=N; ferroC=document.createElement('canvas'); ferroC.width=ferroC.height=N; ferroX=ferroC.getContext('2d'); ferroI=ferroX.createImageData(N,N); ferroF=new Float32Array(N*N); }
+  const d=ferroI.data, F=ferroF, white=MONO, rb=ferroRainbow&&!MONO, hue0=t*0.00022+beatCount*0.07, glow=0.5+0.5*Math.min(1,bass*0.8+beat*0.6); let o=0;
   for(let j=0;j<N;j++){
     const y=(j+0.5)/N*2-1;
     for(let i=0;i<N;i++,o+=4){
       const x=(i+0.5)/N*2-1;
-      if(x*x+y*y>1.03){ d[o+3]=0; continue; }
+      if(x*x+y*y>1.03){ d[o+3]=0; F[o>>2]=0; continue; }
       let f=0, gx=0, gy=0;
       for(let q=0;q<nb;q++){ const dx=x-FBX[q], dy=y-FBY[q], r2=FBR[q], d2=dx*dx+dy*dy; if(d2>=r2) continue; const u=1-d2/r2; f+=u*u; const w2=u/r2; gx+=dx*w2; gy+=dy*w2; }
-      if(f<0.3){ d[o+3]=0; continue; }
-      d[o+3]=f>0.34?255:(f-0.3)*6375;
+      F[o>>2]=f;
+      if(f<0.2){ d[o+3]=0; continue; }
+      d[o+3]=255;                                 /* painted a little past the edge; the outline below does the cutting */
       if(white){ d[o]=d[o+1]=d[o+2]=255; continue; }
       /* surface normal: outward across the surface, tipping upright towards the middle of the mass */
-      const s=Math.exp((0.3-f)*1.45), nz=Math.sqrt(1-s*s), gl=Math.sqrt(gx*gx+gy*gy)||1, nx=gx/gl*s, ny=gy/gl*s;
+      const s=f<0.3?1:Math.exp((0.3-f)*1.45), nz=Math.sqrt(1-s*s), gl=Math.sqrt(gx*gx+gy*gy)||1, nx=gx/gl*s, ny=gy/gl*s;
       const d1=-0.45*nx-0.6*ny+0.66*nz, d2=0.5*nx+0.6*ny+0.62*nz, e=1-nz;
       let v=7+(d1>0?d1*d1*d1*70:0)+e*e*e*150;
       if(d1>0.86){ const h=(d1-0.86)/0.14; v+=h*h*255; }
@@ -1327,6 +1328,28 @@ function mFerro(t){
     }
   }
   ferroX.putImageData(ferroI,0,0);
+  /* the outline of the fluid, traced between the sample points so the edge stays sharp and smooth at any screen size */
+  const cs=R*2/N, x0=cx-R+cs/2, y0=cy-R+cs/2, T=0.3;
+  const outline=(ox,oy)=>{
+    g.beginPath();
+    for(let j=0;j<N-1;j++){
+      const r0=j*N, r1=r0+N, ya=y0+oy+j*cs, yb=ya+cs; let run=-1;
+      for(let i=0;i<N-1;i++){
+        const a=F[r0+i], b=F[r0+i+1], c=F[r1+i+1], e=F[r1+i], n=(a>=T)+(b>=T)+(c>=T)+(e>=T);
+        if(n===4){ if(run<0) run=i; continue; }
+        if(run>=0){ g.rect(x0+ox+run*cs,ya,(i-run)*cs,cs); run=-1; }
+        if(!n) continue;
+        const xa=x0+ox+i*cs, xb=xa+cs; let first=true;
+        const pt=(px,py)=>{ first?g.moveTo(px,py):g.lineTo(px,py); first=false; };
+        if(a>=T) pt(xa,ya); if((a>=T)!==(b>=T)) pt(xa+cs*(T-a)/(b-a),ya);
+        if(b>=T) pt(xb,ya); if((b>=T)!==(c>=T)) pt(xb,ya+cs*(T-b)/(c-b));
+        if(c>=T) pt(xb,yb); if((c>=T)!==(e>=T)) pt(xb-cs*(T-c)/(e-c),yb);
+        if(e>=T) pt(xa,yb); if((e>=T)!==(a>=T)) pt(xa,yb-cs*(T-e)/(a-e));
+        g.closePath();
+      }
+      if(run>=0) g.rect(x0+ox+run*cs,ya,(N-1-run)*cs,cs);
+    }
+  };
   g.save();
   g.beginPath(); g.arc(cx,cy,R,0,TAU);
   if(rb&&!WIRE){                                 /* rainbow version: a dark window so the colours glow */
@@ -1339,8 +1362,10 @@ function mFerro(t){
     gr.addColorStop(0,'rgba(255,255,255,'+Math.min(1,0.84+0.16*level+0.1*beat).toFixed(3)+')'); gr.addColorStop(0.65,'rgba(255,255,255,.62)'); gr.addColorStop(1,'rgba(255,255,255,.1)');
     g.fillStyle=gr; g.fill();
   }
-  g.clip(); g.imageSmoothingEnabled=true; g.imageSmoothingQuality='high';
-  if(!MONO&&!WIRE&&!rb){ g.globalAlpha=0.2; g.drawImage(ferroC,cx-R+R*0.035,cy-R+R*0.05,R*2,R*2); g.globalAlpha=1; }   /* soft shadow on the glass */
+  g.clip();
+  if(!MONO&&!WIRE&&!rb){ outline(R*0.035,R*0.05); g.fillStyle='rgba(0,0,0,.2)'; FILL.call(g); }   /* soft shadow on the glass */
+  outline(0,0); g.clip();
+  g.imageSmoothingEnabled=true; g.imageSmoothingQuality='high';
   g.drawImage(ferroC,cx-R,cy-R,R*2,R*2);
   g.restore();
   g.beginPath(); g.arc(cx,cy,R,0,TAU); g.strokeStyle=rb?'hsl('+((hue0*360)%360|0)+',95%,60%)':col(0.55,0.9); g.lineWidth=(rb?2+3*glow:2)*U; g.stroke();
