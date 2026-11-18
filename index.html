@@ -304,6 +304,12 @@ body.quiet #screen{margin:0!important;border-radius:0!important;box-shadow:none!
       </div>
     </div>
   </div>
+  <div class="grp" id="showGrp">
+    <button type="button" class="fold" id="bFoldShow" data-fold="show" aria-expanded="false" aria-controls="showBody">Shows</button>
+    <div class="foldbody" id="showBody" hidden>
+      <div class="keys scroll" id="shows"></div>
+    </div>
+  </div>
   <p id="msg" role="status"></p>
 </section>
 <div id="tip" role="tooltip" hidden></div>
@@ -840,17 +846,19 @@ try{ const dv0=parseInt(localStorage.getItem('prism-demo'),10); if(dv0>=0&&dv0<B
 
 /* ---------- analysis ---------- */
 let bass=0, mid=0, treb=0, level=0, beat=0, beatCount=0, lastBeat=0;
+let secAt=-1e9, secDir=0;                   /* when the song last made a big change, and whether it rose or fell */
 let kick=0, snare=0, hat=0, kickOn=false, snareOn=false, hatOn=false;      /* the three layers' hits: a fading level and a one-frame flag each */
 let userGain=1, pk=0.3, silentSince=0, act=0, sounding=false, noiseFloor=0.2, lastAn=0, dirty=performance.now()+700, bandsLive=false;
 const clamp=v=>v<0?0:v>1?1:v;
 function wake(n){ dirty=Math.max(dirty,performance.now()+(n||30)*17); }
-window.__prismDbg=()=>({beats:beatCount,bass:bass,mid:mid,treb:treb,level:level,kick:kick,snare:snare,hat:hat,act:act,sounding:sounding,bpm:bpm,gain:gain,raw:DET.raw,top:DET.top,floor:noiseFloor,bandsLive:bandsLive});
+window.__prismDbg=()=>({beats:beatCount,bass:bass,mid:mid,treb:treb,level:level,kick:kick,snare:snare,hat:hat,act:act,sounding:sounding,bpm:bpm,gain:gain,secAt:secAt,secDir:secDir,raw:DET.raw,top:DET.top,floor:noiseFloor,bandsLive:bandsLive});
 /*DETECT-START*/
 /* Listens for hits in three layers of the sound - low (kick, bass), middle (snare, voice, guitar) and high (hats, cymbals) -
    and measures how full each layer is. A hit is a sudden rise in a layer compared with how that layer has been behaving over
    the last second and a half, so it keeps working whether the song is loud, quiet, dense or sparse. Each layer's fullness is
    scaled to that layer's own recent range, so a quiet layer still moves through its whole range. */
-const DET={prev:null,hist:[0,1,2,3].map(()=>new Float32Array(90)),hn:0,last:[-1e9,-1e9,-1e9,-1e9],lastBeat:-1e9,lo:[0,0,0],hi:[0.3,0.3,0.3],pk:[60,60,60],mx:[0,0,0,0],on:[0,0,0,0],lv:[0,0,0],raw:0,top:0,beat:0};
+const SEC_TH=0.06;
+const DET={prev:null,hist:[0,1,2,3].map(()=>new Float32Array(90)),hn:0,last:[-1e9,-1e9,-1e9,-1e9],lastBeat:-1e9,lo:[0,0,0],hi:[0.3,0.3,0.3],pk:[60,60,60],mx:[0,0,0,0],on:[0,0,0,0],lv:[0,0,0],raw:0,top:0,beat:0,tp:0,fast:0,slow:0,lastSec:-1e9,sec:0};
 function detect(F,t,sr,sens){
   const n=F.length, nyq=sr/2, bin=hz=>Math.max(1,Math.min(n-1,Math.round(hz/nyq*n)));
   const E=[bin(32),bin(150),bin(2500),bin(12000)], L=[bin(30),bin(200),bin(2500),bin(12000)], D=DET;
@@ -865,6 +873,11 @@ function detect(F,t,sr,sens){
   fl[3]=fl[0]*0.45+fl[1]*0.35+fl[2]*0.2;
   let top=0;
   for(let b=0;b<3;b++){ let s=0; for(let k=L[b];k<L[b+1];k++){ s+=F[k]; if(F[k]>top) top=F[k]; } const v=s/((L[b+1]-L[b])*255); D.lv[b]=v; tot+=v; }
+  /* big changes in the song - a drop, a build arriving, a breakdown - show as the last half second standing well clear of the last several seconds */
+  { const e=0.55*D.lv[0]+0.45*tot/3, dt=Math.min(100,Math.max(5,t-D.tp)); D.tp=t; D.sec=0;
+    D.fast+=(e-D.fast)*(1-Math.exp(-dt/500)); D.slow+=(e-D.slow)*(1-Math.exp(-dt/6000));
+    const df=D.fast-D.slow;
+    if(Math.abs(df)>SEC_TH/sens&&t-D.lastSec>5000&&D.hn>120){ D.sec=df>0?1:-1; D.lastSec=t; D.slow=D.fast; } }
   D.raw=tot/3; D.top=top/255;        /* top: the strongest single pitch, which is what tells sound from silence even for one clear note */ D.prev.set(F);
   const REL=0.25, N=Math.min(D.hn,90), K=[1.5,1.7,1.7,1.6], GAP=[170,130,85,230], FLOOR=[0.014,0.01,0.01,0.012];
   D.beat=0;
@@ -949,6 +962,7 @@ function analyse(t){
   beat*=fall; kick*=fall; snare*=Math.pow(0.85,k); hat*=Math.pow(0.78,k);
   if(window.__prismForce){ bass=mid=treb=level=1; kick=snare=hat=beat=1; sounding=true; act=1; gain=Math.max(gain,userGain*4); for(let b=0;b<3;b++) pkB[b]=Math.min(pkB[b],0.05); }
   if(sounding&&t-lastBeat>2500&&t-lastPseudo>900){ pseudoBeats++; lastPseudo=t; }      /* music with no clear hits still moves things along slowly */
+  if(sounding&&D.sec){ secAt=t; secDir=D.sec; }
   if(sounding){
     if(D.on[0]){ kick=Math.max(kick,D.on[0]); kickOn=true; }
     if(D.on[1]){ snare=Math.max(snare,D.on[1]); snareOn=true; }
@@ -2661,12 +2675,34 @@ $('bFavDel').onclick=()=>{
   if(favs.length<2&&autoFavs){ autoFavs=false; autoLabels(); saveSet(); }
 };
 
+/* ---------- shows: ready-made runs of looks that sit well together. Auto steps through the chosen one ---------- */
+const SHOWS=[
+  {n:'Hi-fi night',l:[{s:'retro',m:'Scope',p:'Phosphor'},{s:'vfd',m:'Analyser'},{s:'retro',m:'Bars',p:'Amber'},{s:'meter',m:'Meters'},{s:'vinyl',m:'Grooves',p:'Sunset'},{s:'led',m:'Bars',p:'Ember'},{s:'retro',m:'X-Y',p:'Phosphor'}]},
+  {n:'Neon club',l:[{s:'modern',m:'Tunnel',p:'Neon'},{s:'modern',m:'Bars',p:'Vapour',x:['Radial']},{s:'vector',m:'Wireframe',p:'Neon'},{s:'modern',m:'Kaleidoscope',p:'Vapour'},{s:'modern',m:'Mirror',p:'Neon',x:['Particles']},{s:'console',m:'Polygons',p:'Spectrum'},{s:'modern',m:'Disc 3D',p:'Spectrum'}]},
+  {n:'Liquid',l:[{s:'modern',m:'Ferrofluid',p:'Mono'},{s:'modern',m:'Blob',p:'Ocean',x:['Orbs']},{s:'modern',m:'Contours',p:'Teal'},{s:'modern',m:'Ribbons',p:'Ice'},{s:'modern',m:'Ferrofluid',p:'Violet'},{s:'modern',m:'Blob',p:'Aurora',x:['Contours']}]},
+  {n:'Geometry',l:[{s:'vector',m:'Wireframe',p:'Neon'},{s:'modern',m:'Lobes',p:'Spectrum',x:['Contours']},{s:'console',m:'Polygons',p:'Spectrum'},{s:'modern',m:'Disc 3D',p:'Spectrum'},{s:'modern',m:'Spikes',p:'Cobalt',x:['Radial']},{s:'modern',m:'Model 3D',p:'Neon'},{s:'vector',m:'Kaleidoscope',p:'Vapour'}]},
+  {n:'Sunset',l:[{s:'vinyl',m:'Grooves',p:'Sunset'},{s:'modern',m:'Ribbons',p:'Sunset'},{s:'modern',m:'Mirror',p:'Dusk',x:['Blob']},{s:'modern',m:'Terrain',p:'Sunset'},{s:'retro',m:'Scope',p:'Amber'},{s:'modern',m:'Area',p:'Fire'}]},
+  {n:'Print shop',l:[{s:'print',m:'Poster',p:'Riso'},{s:'print',m:'Dots',p:'Riso'},{s:'print',m:'Mirror',p:'Riso'},{s:'print',m:'Contours',p:'Riso'},{s:'print',m:'Spikes',p:'Riso',x:['Blob']},{s:'print',m:'Radial',p:'Riso'}]},
+  {n:'Big layers',l:[{s:'modern',m:'Particles',p:'Neon',x:['Bars','Radial']},{s:'modern',m:'Lobes',p:'Candy',x:['Blob','Dots']},{s:'modern',m:'Scope',p:'Aurora',x:['Ribbons']},{s:'modern',m:'Spikes',p:'Rose',x:['Mirror']},{s:'led',m:'Radial',p:'Ember',x:['Bars']},{s:'modern',m:'Disc 3D',p:'Vapour',x:['Contours']}]}
+];
+let showIdx=-1, showPos=0;
+function showUiKeys(){ document.querySelectorAll('#shows button').forEach((b,i)=>b.setAttribute('aria-pressed',String(i===showIdx))); }
+function startShow(i){
+  if(i===showIdx){ showIdx=-1; showUiKeys(); say('Show stopped.'); return; }
+  showIdx=i; showPos=0; showUiKeys(); applyFav(SHOWS[i].l[0]);
+  if(!auto) $('bAuto').click();                 /* a show needs Auto to move it along */
+  lastSwitch=performance.now(); lastSwitchBeat=beatCount;
+  say('Show: '+SHOWS[i].n+'. It moves on at the pace set under Beat and auto change. Press it again to stop.');
+}
+SHOWS.forEach((sh,i)=>{ const b=document.createElement('button'); b.type='button'; b.textContent=sh.n; b.setAttribute('aria-pressed','false'); b.onclick=()=>startShow(i); $('shows').appendChild(b); });
+window.__prismShows=SHOWS; window.__prismStep=()=>autoNext();
+
 /* ---------- beat sensitivity, tempo and auto-change settings ---------- */
-const AUTO_OPTS=[['8 beats',8,0],['16 beats',16,0],['32 beats',32,0],['20 seconds',0,20],['60 seconds',0,60]];
+const AUTO_OPTS=[['8 beats',8,0],['16 beats',16,0],['32 beats',32,0],['20 seconds',0,20],['60 seconds',0,60],['drops',-1,0]];
 let autoIdx=2, autoFavs=false, lastSwitchBeat=0, palTurn2=0;
 function saveSet(){ try{ localStorage.setItem('prism-set',JSON.stringify({a:autoIdx,f:autoFavs,b:+$('beatSens').value})); }catch(e){} }
 function autoLabels(){
-  $('bAutoEvery').textContent='Every '+AUTO_OPTS[autoIdx][0];
+  $('bAutoEvery').textContent=AUTO_OPTS[autoIdx][1]<0?'On drops and rises':'Every '+AUTO_OPTS[autoIdx][0];
   $('bAutoFrom').textContent=autoFavs?'From favourites':'From everything';
   $('bAutoFrom').setAttribute('aria-pressed',String(autoFavs));
 }
@@ -2678,7 +2714,8 @@ $('bAutoFrom').onclick=()=>{
   autoFavs=!autoFavs; autoLabels(); saveSet(); say('');
 };
 function autoNext(){
-  if(autoFavs&&favs.length>1){ favPos=(favPos+1)%favs.length; applyFav(favs[favPos]); }
+  if(showIdx>=0){ const L=SHOWS[showIdx].l; showPos=(showPos+1)%L.length; applyFav(L[showPos]); }
+  else if(autoFavs&&favs.length>1){ favPos=(favPos+1)%favs.length; applyFav(favs[favPos]); }
   else{
     setMode(mode+1);
     if(++palTurn2%2===0&&!STYLES[style].noPal){ const ks=Object.keys(PALS); setPal(ks[(ks.indexOf(palName)+1)%ks.length]); }
@@ -2687,6 +2724,7 @@ function autoNext(){
 }
 function autoDue(t){
   const o=AUTO_OPTS[autoIdx], el=t-lastSwitch;
+  if(o[1]<0) return (secAt>lastSwitch&&el>4000)||el>90000;      /* on the song's big changes; a song with none still moves on after a minute and a half */
   return o[1]?((beatCount-lastSwitchBeat>=o[1]&&el>4000)||el>45000):el>o[2]*1000;
 }
 try{
@@ -2991,7 +3029,8 @@ const HELP={
   bFoldFav:'Shows or hides your saved favourite looks.',
   bFoldGain:'Shows or hides the gain slider, which sets how strongly the visuals react.',
   bFoldScreen:'Shows or hides the screen controls, such as full screen, lock and the mini player.',
-  bAutoEvery:'Sets how often Auto switches to a new look. Each press moves to the next choice.',
+  bAutoEvery:'Sets how often Auto switches to a new look. Each press moves to the next choice. The last choice waits for the big moments in the song, such as a drop or a breakdown.',
+  bFoldShow:'Opens the ready-made shows. Each is a run of looks that suit each other. Press one and Auto steps through it; press it again to stop.',
   bAutoFrom:'Chooses whether Auto picks from every look or only from your favourites.',
   bAuto:'When lit, the look changes by itself as the music plays.',
   bGrid:'Shows or hides the measuring grid on the retro screen.',
