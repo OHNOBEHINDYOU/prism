@@ -1,8 +1,8 @@
 /* Prism offline support.
    Online: always fetch the newest copy, and keep it for later.
    Offline, or if the network stalls: use the copy saved on this device. */
-const CACHE = 'prism-v2';
-const CORE = ['./', 'index.html', 'manifest.webmanifest', 'icon-180.png', 'icon-192.png', 'icon-512.png', 'fonts/michroma.woff2', 'fonts/share-tech-mono.woff2'];
+const CACHE = 'prism-v3';
+const CORE = ['./', 'index.html', 'manifest.webmanifest', 'icon-180.png', 'icon-192.png', 'icon-512.png', 'fonts/michroma.woff2', 'fonts/share-tech-mono.woff2', 'models/turntable.glb'];
 
 self.addEventListener('install', e => {
   self.skipWaiting();

@@ -218,6 +218,7 @@ body.quiet #screen{margin:0!important;border-radius:0!important;box-shadow:none!
       <button id="bSmooth" type="button" aria-pressed="false" hidden>Smooth lines</button>
       <button id="bPic" type="button" hidden>Choose picture</button>
       <button id="bPicReset" type="button" hidden>Reset picture</button>
+      <select id="mdlPick" class="sel" aria-label="3D model" hidden></select>
       <button id="bMdl" type="button" hidden>Choose model</button>
       <button id="bMdlReset" type="button" hidden>Reset model</button>
     </div>
@@ -1656,7 +1657,7 @@ async function readGLB(buf){
   }
   const ctr=[(lo[0]+hi[0])/2,(lo[1]+hi[1])/2,(lo[2]+hi[2])/2]; let far=1e-9;
   for(const G of out) for(let q=0;q<G.P.length;q+=3){ const d=Math.hypot(G.P[q]-ctr[0],G.P[q+1]-ctr[1],G.P[q+2]-ctr[2]); if(d>far) far=d; }
-  const k=0.72/far;
+  const k=0.75/far;
   for(const G of out) for(let q=0;q<G.P.length;q+=3){ G.P[q]=(G.P[q]-ctr[0])*k; G.P[q+1]=(G.P[q+1]-ctr[1])*k; G.P[q+2]=(G.P[q+2]-ctr[2])*k; }
   return {groups:out,tris:tris};
 }
@@ -1680,7 +1681,9 @@ function builtInModel(){
   ['#ff2bd6','#ffb000','#39ff88','#00f5ff','#7b2ff7','#ff2bd6'].forEach((h,k)=>gr.addColorStop(k/5,h)); x.fillStyle=gr; x.fillRect(0,0,256,4);
   return {groups:[{P:P,N:N,U:U,I:I,n:n,col:[1,1,1,1],img:c,cut:false}],tris:I.length/3};
 }
-const MDL={data:null,own:false,gl:null,cv:null,prog:null,loc:null,gpu:null,dead:false,tried:false,spin:0,fx:[1,0,0,0],pts:null,err:''};
+/* ready-made models kept with the page: name on the list, and how far the view tilts down on to each */
+const MDL_SETS={turntable:['Turntable',0.8],amplifier:['Amplifier',0.35],oscilloscope:['Oscilloscope',0.3],playstation:['PlayStation',0.7],speaker:['Speaker',0.2],headphones:['Headphones',0.15],system:['Whole system',0.25]};
+const MDL={pick:'',tilt:0.25,busy:'',hasOwn:false,data:null,own:false,gl:null,cv:null,prog:null,loc:null,gpu:null,dead:false,tried:false,spin:0,fx:[1,0,0,0],pts:null,err:''};
 function mdlGL(){
   if(MDL.gl||MDL.dead) return MDL.gl;
   try{
@@ -1702,8 +1705,8 @@ void main(){
   float band=floor(p.y*7.0+uT*0.7); float h=fract(sin(band*91.7)*43758.5);
   p.x+=(0.4+0.6*uFx.z)*(h-0.5)*0.36*uSn;
   float nz=fract(sin(dot(floor(aP*13.0),vec3(12.9,78.2,37.7)))*43758.5);
-  p+=rd*(0.4+0.6*uFx.w)*nz*(0.15*uTreb+0.2*uHat);
-  p*=1.0+0.07*uBeat;
+  p+=rd*(0.4+0.6*uFx.w)*nz*(0.11*uTreb+0.14*uHat);
+  p*=1.0+0.05*uBeat;
   vec4 mv=uMV*vec4(p,1.0); vP=mv.xyz; vN=mat3(uMV[0].xyz,uMV[1].xyz,uMV[2].xyz)*n; vU=aU; gl_Position=uPr*mv;
 }`;
     const fs=`precision mediump float;
@@ -1752,7 +1755,7 @@ function mdlSet(data,own){
   let total=0; for(const G of data.groups) total+=G.n; const step=Math.max(1,Math.ceil(total/2600)), pts=[];
   for(const G of data.groups) for(let k=0;k<G.n;k+=step) pts.push(G.P[k*3],G.P[k*3+1],G.P[k*3+2]);
   MDL.pts=new Float32Array(pts);
-  window.__prismModel={own:own,tris:data.tris,groups:data.groups.length,textured:data.groups.filter(G=>G.img).length};
+  window.__prismModel={pick:MDL.pick,own:own,tris:data.tris,groups:data.groups.length,textured:data.groups.filter(G=>G.img).length};
 }
 const MDLDB={
   open(){ return new Promise((ok,no)=>{ try{ const r=indexedDB.open('prism',1); r.onupgradeneeded=()=>r.result.createObjectStore('files'); r.onsuccess=()=>ok(r.result); r.onerror=()=>no(r.error); }catch(e){ no(e); } }); },
@@ -1762,7 +1765,7 @@ const MDLDB={
 const MDL_ERR={notglb:'That is not a .glb file. From a download page, choose the GLB version.',packed:'That model is compressed in a way Prism cannot read. Try another GLB version of it.',split:'That model keeps its data in separate files. Choose a single .glb file instead.',big:'That model is too detailed for Prism. Try a simpler one.',empty:'No 3D shape was found in that file.'};
 async function mdlLoad(buf,keep){
   try{
-    const data=await readGLB(buf); mdlSet(data,true); say('');
+    const data=await readGLB(buf); MDL.busy=''; mdlSet(data,true); MDL.hasOwn=true; mdlPick('own'); say('');
     if(keep){ const saved=buf.byteLength<=80e6&&await MDLDB.put(buf); if(!saved) say('Model loaded. It is too large to keep, so choose it again after closing the page.'); }
   }catch(e){
     MDL.err=String(e&&e.message||e); window.__prismModelErr=MDL.err;
@@ -1770,14 +1773,40 @@ async function mdlLoad(buf,keep){
   }
   if(typeof modeUi==='function') modeUi();
 }
+function mdlPick(name){ MDL.pick=name; if(window.__prismModel) window.__prismModel.pick=name; MDL.tilt=MDL_SETS[name]?MDL_SETS[name][1]:0.25; try{ localStorage.setItem('prism-model',name); }catch(e){} if(typeof modeUi==='function') modeUi(); wake(); }
+async function mdlPreset(name,quiet){
+  if(!MDL_SETS[name]||MDL.busy===name) return;
+  MDL.busy=name; if(!quiet) say('Loading the '+MDL_SETS[name][0].toLowerCase()+'...');
+  try{
+    const r=await fetch('models/'+name+'.glb'); if(!r.ok) throw new Error('missing');
+    const data=await readGLB(await r.arrayBuffer());
+    if(MDL.busy!==name) return;                  /* another model was chosen meanwhile */
+    mdlSet(data,false); mdlPick(name); if(!quiet) say('');
+  }catch(e){
+    if(MDL.busy!==name) return;
+    if(!MDL.data||MDL.pick!=='knot'&&!MDL.pick){ mdlSet(builtInModel(),false); mdlPick('knot'); }
+    if(!quiet) say('That model could not be loaded. It needs the hosted page and, the first time, a connection.');
+  }
+  if(MDL.busy===name) MDL.busy='';
+  if(typeof modeUi==='function') modeUi();
+}
 function mModel(t){
   if(!MDL.data) mdlSet(builtInModel(),false);
-  if(!MDL.tried){ MDL.tried=true; MDLDB.get().then(v=>{ if(v&&v.byteLength&&!MDL.own) mdlLoad(v,false); }); }
+  if(!MDL.tried){
+    /* first use: bring back whichever model was showing last time */
+    MDL.tried=true; let want='turntable'; try{ want=localStorage.getItem('prism-model')||want; }catch(e){}
+    MDLDB.get().then(v=>{
+      MDL.hasOwn=!!(v&&v.byteLength);
+      if(MDL.pick) return;                       /* something was chosen while this was being looked up */
+      if(want==='own'&&MDL.hasOwn) mdlLoad(v,false); else if(MDL_SETS[want]) mdlPreset(want,true); else mdlPick('knot');
+      if(typeof modeUi==='function') modeUi();
+    });
+  }
   fade(0.55);
   const m=Math.min(W,H), cx=W/2, cy=H/2, target=(pbeat(t)>>3)%4;
   for(let k=0;k<4;k++) MDL.fx[k]+=((k===target?1:0)-MDL.fx[k])*0.06;     /* the way it bends changes every eight beats */
   MDL.spin+=(0.004+level*0.02+kick*0.03)*(live?act:0);
-  const rx=0.25+0.18*Math.sin(t*0.0003), gl=mdlGL();
+  const rx=MDL.tilt+0.15*Math.sin(t*0.0003), gl=mdlGL();
   if(gl){
     if(!MDL.gpu) mdlUpload();
     const L=MDL.loc, rim=colRGB(0.55);
@@ -1786,7 +1815,9 @@ function mModel(t){
     gl.uniformMatrix4fv(L.uMV,false,M4.view(MDL.spin,rx,3.5)); gl.uniformMatrix4fv(L.uPr,false,M4.persp(0.66,0.1,20));
     gl.uniform1f(L.uT,(t*0.001)%1000); gl.uniform1f(L.uBass,Math.min(1.5,bass)); gl.uniform1f(L.uBeat,kick); gl.uniform1f(L.uPulse,beat); gl.uniform1f(L.uSn,snare); gl.uniform1f(L.uHat,hat); gl.uniform1f(L.uMid,Math.min(1.5,mid)); gl.uniform1f(L.uTreb,Math.min(1.5,treb));
     gl.uniform4fv(L.uFx,MDL.fx); gl.uniform1f(L.uMode,MONO?1:WIRE?2:0); gl.uniform3fv(L.uRim,rim); gl.uniform1i(L.uTex,0);
+    for(let pass=0;pass<2;pass++){ if(pass){ gl.enable(gl.POLYGON_OFFSET_FILL); gl.polygonOffset(-2,-2); }
     for(const G of MDL.gpu||[]){
+      if(!!G.cut!==!!pass) continue;
       gl.bindBuffer(gl.ARRAY_BUFFER,G.p); gl.enableVertexAttribArray(0); gl.vertexAttribPointer(0,3,gl.FLOAT,false,0,0);
       gl.bindBuffer(gl.ARRAY_BUFFER,G.n); gl.enableVertexAttribArray(1); gl.vertexAttribPointer(1,3,gl.FLOAT,false,0,0);
       gl.bindBuffer(gl.ARRAY_BUFFER,G.u); gl.enableVertexAttribArray(2); gl.vertexAttribPointer(2,2,gl.FLOAT,false,0,0);
@@ -1794,7 +1825,8 @@ function mModel(t){
       gl.uniform4fv(L.uCol,G.col); gl.uniform1f(L.uHasTex,G.tex?1:0); gl.uniform1f(L.uCut,G.cut?1:0);
       if(G.tex){ gl.activeTexture(gl.TEXTURE0); gl.bindTexture(gl.TEXTURE_2D,G.tex); }
       gl.drawElements(gl.TRIANGLES,G.count,gl.UNSIGNED_INT,0);
-    }
+    } }
+    gl.disable(gl.POLYGON_OFFSET_FILL);
     g.imageSmoothingEnabled=true; g.imageSmoothingQuality='high';
     g.drawImage(MDL.cv,cx-m/2,cy-m/2,m,m);
   }else{
@@ -2853,7 +2885,8 @@ $('bClicks').onclick=e=>{
 function modeUi(){
   const nm=MODES[mode]?MODES[mode][0]:'', tr=nm==='Scope'||nm==='X-Y', pc=nm.indexOf('Picture')===0, md=nm==='Model 3D';
   $('optGrp').hidden=!(tr||pc||md); $('bSmooth').hidden=!tr; $('bPic').hidden=!pc;
-  $('bMdl').hidden=!md; $('bMdlReset').hidden=!(md&&MDL.own);
+  $('bMdl').hidden=!md; $('bMdlReset').hidden=!(md&&MDL.own); $('mdlPick').hidden=!md;
+  if(document.activeElement!==$('mdlPick')) $('mdlPick').value=MDL.busy||MDL.pick||'knot';
   let own=false; try{ own=!!localStorage.getItem('prism-pic'); }catch(e){}
   $('bPicReset').hidden=!(pc&&(own||picOwn));
   $('bSmooth').setAttribute('aria-pressed',String(smoothTrace));
@@ -2865,7 +2898,17 @@ $('mdlFile').onchange=e=>{
   say('Reading the model...');
   f.arrayBuffer().then(b=>mdlLoad(b,true)).catch(()=>say('That file could not be opened.'));
 };
-$('bMdlReset').onclick=()=>{ mdlSet(builtInModel(),false); MDL.tried=true; MDLDB.put(null); modeUi(); };
+$('bMdlReset').onclick=()=>{ MDL.busy=''; mdlSet(builtInModel(),false); MDL.tried=true; MDL.hasOwn=false; MDLDB.put(null); mdlPick('knot'); };
+{
+  const sel=$('mdlPick'), opt=(v,t)=>{ const o=document.createElement('option'); o.value=v; o.textContent=t; sel.appendChild(o); };
+  Object.keys(MDL_SETS).forEach(k=>opt(k,MDL_SETS[k][0])); opt('knot','Knot'); opt('own','Your own file');
+  sel.onchange=()=>{
+    const v=sel.value; MDL.tried=true;
+    if(v==='knot'){ MDL.busy=''; mdlSet(builtInModel(),false); mdlPick('knot'); }
+    else if(v==='own'){ if(MDL.hasOwn) MDLDB.get().then(b=>{ if(b&&b.byteLength) mdlLoad(b,false); else $('mdlFile').click(); }); else { modeUi(); $('mdlFile').click(); } }
+    else mdlPreset(v,false);
+  };
+}
 $('bSmooth').onclick=()=>{ smoothTrace=!smoothTrace; try{ localStorage.setItem('prism-smooth',smoothTrace?'1':'0'); }catch(e){} modeUi(); };
 function loadPicture(url,keep){
   const im=new Image();
